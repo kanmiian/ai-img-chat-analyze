@@ -1,0 +1,38 @@
+# 编译输出
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+main
+
+# 测试输出
+*.test
+*.out
+
+# Go 工作空间
+/vendor/
+/bin/
+/pkg/
+
+# 环境变量
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 操作系统
+.DS_Store
+Thumbs.db
+
+# 日志
+*.log
+
+# 临时文件
+tmp/
+temp/
+

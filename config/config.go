@@ -1,0 +1,42 @@
+package config
+
+import (
+	"log"
+	"os"
+)
+
+// Config 结构体存储所有配置
+type Config struct {
+	OcrServiceURL string // PaddleOCR 服务的地址
+	VolcanoApiKey string // 火山 API Key
+	VolcanoApiURL string // 火山 API Endpoint
+	OaApiBaseUrl  string // <-- OA 系统的数据 API 地址
+}
+
+// LoadConfig 从环境变量加载配置
+func LoadConfig() *Config {
+	cfg := &Config{
+		// OcrServiceURL: getEnv("OCR_SERVICE_URL", "http://paddleocr-service:8888/ocr"),
+		VolcanoApiKey: getEnv("VOLCANO_API_KEY", ""),
+		VolcanoApiURL: getEnv("VOLCANO_API_URL", ""),
+		OaApiBaseUrl:  getEnv("OA_API_BASE_URL", "http://oa.local/api/oa"),
+	}
+
+	// 本地调试时，如果 docker-compose 不在运行，可以回退到 localhost
+	// 检查是否在 Docker 容器内
+	// if _, exists := os.LookupEnv("IS_IN_DOCKER"); !exists {
+	// 	log.Println("未在 Docker 容器中运行，OCR URL 回退到 localhost")
+	// 	cfg.OcrServiceURL = getEnv("OCR_SERVICE_URL_LOCAL", "http://localhost:8888/ocr")
+	// }
+
+	return cfg
+}
+
+// 辅助函数：从环境变量读取值，如果不存在则使用默认值
+func getEnv(key string, fallback string) string {
+	if value, ok := os.LookupEnv(key); ok {
+		return value
+	}
+	log.Printf("环境变量 %s 未设置, 将使用默认值: %s", key, fallback)
+	return fallback
+}

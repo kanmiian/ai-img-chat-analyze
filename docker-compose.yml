@@ -1,0 +1,45 @@
+services:
+  # 服务二：您的 Go 主应用
+  my-ai-app:
+    build: 
+      context: . # 基于当前目录的 Dockerfile 构建
+    container_name: my-ai-app
+    ports:
+      - "8080:8080" # 暴露 8080 端口给您的 OA 系统调用
+    environment:
+      # 告诉 Go 应用，它在 Docker 网络内部
+      - IS_IN_DOCKER=true 
+      # PaddleOCR 服务的内部地址
+      - OCR_SERVICE_URL=http://paddleocr-service:8888/ocr
+      # 从宿主机的 .env 文件读取火山引擎的配置
+      - VOLCANO_API_KEY=${VOLCANO_API_KEY}
+      - VOLCANO_API_URL=${VOLCANO_API_URL}
+    restart: unless-stopped
+    depends_on:
+      - paddleocr-service # 确保 PaddleOCR 服务先启动
+    networks:
+      - ai-network
+
+  # 服务一：PaddleOCR 接口服务
+  paddleocr-service:
+    image: hub.paddlepaddle.org/paddleocr-api/latest
+    container_name: paddleocr-service
+    ports:
+      # 8888 端口是 Go 应用在内部网络访问的
+      # 我们也把它暴露到宿主机，方便您本地调试
+      - "8888:8888" 
+    restart: unless-stopped
+    networks:
+      - ai-network
+    # 如果您的服务器有 NVIDIA GPU，取消下面的注释
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+networks:
+  ai-network:
+    driver: bridge
