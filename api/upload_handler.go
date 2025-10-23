@@ -2,11 +2,14 @@ package api
 
 import (
 	"errors"
+	"fmt"
 	"log"
+	"mime/multipart"
 	"my-ai-app/config"
 	"my-ai-app/model"
 	"my-ai-app/service"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -15,42 +18,76 @@ type UploadHandler struct {
 	analysisService *service.AnalysisService
 }
 
-// NewUploadHandler 依赖注入 (不变)
 func NewUploadHandler(cfg *config.Config) *UploadHandler {
 	return &UploadHandler{
 		analysisService: service.NewAnalysisService(cfg),
 	}
 }
 
-// AnalyzeImage 已重命名为 AnalyzeApplication (核心修改)
-func (h *UploadHandler) AnalyzeApplication(c *gin.Context) {
-	// 1. 绑定表单数据 (如 "application_type", "application_time" 等)
-	var appData model.ApplicationData
-	if err := c.Bind(&appData); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "表单数据无效", "details": err.Error()})
+// ---  Qwen ---
+func (h *UploadHandler) AnalyzeQwen(c *gin.Context) {
+	startTime := time.Now()
+	log.Printf("收到Qwen分析请求 - IP: %s", c.ClientIP())
+
+	appData, fileHeader, err := h.bindRequest(c)
+	if err != nil {
+		log.Printf("Qwen请求绑定失败: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求无效", "details": err.Error()})
 		return
 	}
 
-	// 2. 尝试获取图片文件 (这是可选的)
+	result, err := h.analysisService.AnalyzeWithQwen(appData, fileHeader)
+	totalDuration := time.Since(startTime)
+	if err != nil {
+		log.Printf("Qwen分析异常 (总耗时: %v): %v", totalDuration, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Qwen 分析失败", "details": err.Error()})
+		return
+	}
+
+	log.Printf("Qwen分析完成 (总耗时: %v) - 结果: IsAbnormal=%v", totalDuration, result.IsAbnormal)
+	c.JSON(http.StatusOK, result)
+}
+
+// --- Volcano ---
+func (h *UploadHandler) AnalyzeVolcano(c *gin.Context) {
+	startTime := time.Now()
+	log.Printf("收到Volcano分析请求 - IP: %s", c.ClientIP())
+
+	// 1. 调用私有助手解析请求
+	appData, fileHeader, err := h.bindRequest(c)
+	if err != nil {
+		log.Printf("Volcano请求绑定失败: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求无效", "details": err.Error()})
+		return
+	}
+
+	result, err := h.analysisService.AnalyzeWithVolcano(appData, fileHeader)
+	totalDuration := time.Since(startTime)
+	if err != nil {
+		log.Printf("Volcano分析异常 (总耗时: %v): %v", totalDuration, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Volcano 分析失败", "details": err.Error()})
+		return
+	}
+
+	log.Printf("Volcano分析完成 (总耗时: %v) - 结果: IsAbnormal=%v", totalDuration, result.IsAbnormal)
+	c.JSON(http.StatusOK, result)
+}
+
+// --- 私有助手: 解析表单数据和可选的图片 ---
+func (h *UploadHandler) bindRequest(c *gin.Context) (model.ApplicationData, *multipart.FileHeader, error) {
+	var appData model.ApplicationData
+	// 1. 绑定表单数据
+	if err := c.Bind(&appData); err != nil {
+		return model.ApplicationData{}, nil, fmt.Errorf("表单数据无效: %w", err)
+	}
+
+	// 2. 尝试获取图片 (可选)
 	fileHeader, err := c.FormFile("image")
 	if err != nil && !errors.Is(err, http.ErrMissingFile) {
 		// 如果有错误，但不是 "没找到文件" 错误，说明是其他上传问题
-		c.JSON(http.StatusBadRequest, gin.H{"error": "图片上传失败", "details": err.Error()})
-		return
+		return appData, nil, fmt.Errorf("图片上传失败: %w", err)
 	}
 
-	// 如果 err == http.ErrMissingFile, 那么 fileHeader 会是 nil
-	// 这正是我们想要的 "可选图片" 逻辑
-
-	log.Printf("收到分析请求: %+v, 是否有图片: %v", appData, fileHeader != nil)
-
-	// 3. 调用服务进行分析 (传入表单数据和(可能的)图片)
-	result, err := h.analysisService.Analyze(appData, fileHeader)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "分析失败", "details": err.Error()})
-		return
-	}
-
-	// 4. 成功返回
-	c.JSON(http.StatusOK, result)
+	// 无论 err 是 nil (有图) 还是 ErrMissingFile (无图)，都返回
+	return appData, fileHeader, nil
 }

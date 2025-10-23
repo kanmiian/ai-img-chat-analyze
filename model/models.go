@@ -13,11 +13,12 @@ type ApplicationData struct {
 // ExtractedData 是从(图片)中提取的结构化数据
 // (这个结构体可以保持不变，或者根据需要扩展)
 type ExtractedData struct {
-	ExtractedName string `json:"extracted_name"` // <-- 图片中提取到的姓名
-	RequestDate   string `json:"request_date"`
-	RequestTime   string `json:"request_time"`
-	RequestType   string `json:"request_type"`
-	Content       string `json:"content"`
+	ExtractedName    string `json:"extracted_name"`
+	RequestDate      string `json:"request_date"`
+	RequestTime      string `json:"request_time"`
+	RequestType      string `json:"request_type"`
+	IsProofTypeValid bool   `json:"is_proof_type_valid"`
+	Content          string `json:"content"`
 }
 
 // AnalysisResult 是我们 API 统一的返回结构 (保持不变)

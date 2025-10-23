@@ -10,6 +10,8 @@ type Config struct {
 	OcrServiceURL string // PaddleOCR 服务的地址
 	VolcanoApiKey string // 火山 API Key
 	VolcanoApiURL string // 火山 API Endpoint
+	QwenApiKey    string // 通义千问 API Key
+	QwenApiURL    string // 通义千问 API Endpoint
 	OaApiBaseUrl  string // <-- OA 系统的数据 API 地址
 }
 
@@ -19,6 +21,8 @@ func LoadConfig() *Config {
 		// OcrServiceURL: getEnv("OCR_SERVICE_URL", "http://paddleocr-service:8888/ocr"),
 		VolcanoApiKey: getEnv("VOLCANO_API_KEY", ""),
 		VolcanoApiURL: getEnv("VOLCANO_API_URL", ""),
+		QwenApiKey:    getEnv("QWEN_API_KEY", "sk-fc76b62ec90646d3ae38d02bfb1c3294"),
+		QwenApiURL:    getEnv("QWEN_API_URL", "https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation"),
 		OaApiBaseUrl:  getEnv("OA_API_BASE_URL", "http://oa.local/api/oa"),
 	}
 
