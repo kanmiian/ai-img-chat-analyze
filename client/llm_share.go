@@ -6,14 +6,18 @@ import (
 	"fmt"
 	"image"
 	"image/jpeg"
-	_ "image/jpeg"
-	_ "image/png"
 	"io"
+	"net/http"
+	"time"
+
+	_ "image/gif"
+	_ "image/png"
+
+	_ "golang.org/x/image/bmp"
+	_ "golang.org/x/image/webp"
+
 	"log"
 	"mime/multipart"
-	"path/filepath"
-	"strings"
-	"time"
 
 	"github.com/nfnt/resize"
 )
@@ -50,80 +54,103 @@ type LlmResponse struct {
 }
 
 func imageToBase64(fileHeader *multipart.FileHeader) (string, string, error) {
-	startTime := time.Now()
-	log.Printf("开始处理图片 - 文件名: %s, 大小: %d bytes", fileHeader.Filename, fileHeader.Size)
 
-	// 1. 打开文件
 	file, err := fileHeader.Open()
 	if err != nil {
-		log.Printf("打开文件失败: %v", err)
-		return "", "", err
+		return "", "", fmt.Errorf("无法打开文件: %w", err)
 	}
 	defer file.Close()
 
-	// 2. 读取文件内容到内存
-	fileData, err := io.ReadAll(file)
+	img, originalFormat, err := image.Decode(file)
 	if err != nil {
-		log.Printf("读取文件内容失败: %v", err)
-		return "", "", fmt.Errorf("读取文件内容失败: %w", err)
+		return "", "", fmt.Errorf("无法解码图片: %w", err)
 	}
-	log.Printf("文件读取完成 - 大小: %d bytes", len(fileData))
+	log.Printf("图片原始格式: %s, 原始尺寸: %dx%d", originalFormat, img.Bounds().Dx(), img.Bounds().Dy())
 
-	// 3. 从字节数据解码图片
-	img, originalFormat, err := image.Decode(bytes.NewReader(fileData))
+	// 缩放图片以控制文件大小
+	const maxWidth uint = 1000
+	const maxHeight uint = 1000
+
+	// 如果图片太大，进行缩放
+	if img.Bounds().Dx() > int(maxWidth) || img.Bounds().Dy() > int(maxHeight) {
+		img = resize.Resize(maxWidth, maxHeight, img, resize.Lanczos3)
+		log.Printf("图片已缩放至: %dx%d", img.Bounds().Dx(), img.Bounds().Dy())
+	}
+
+	buf := new(bytes.Buffer)
+
+	jpegOptions := &jpeg.Options{Quality: 80}
+	if err := jpeg.Encode(buf, img, jpegOptions); err != nil {
+		return "", "", fmt.Errorf("无法将图片编码为 JPEG: %w", err)
+	}
+	log.Printf("图片已重编码为 JPEG (质量: 80), 压缩后大小: %.2f KB", float64(buf.Len())/1024.0)
+
+	sEnc := base64.StdEncoding.EncodeToString(buf.Bytes())
+
+	return sEnc, "image/jpeg", nil
+}
+
+func getBase64FromInput(imageURL string) (string, string, error) {
+	if imageURL == "" {
+		return "", "", fmt.Errorf("没有提供图片 URL")
+	}
+
+	log.Printf("Processing image from URL: %s", imageURL)
+
+	httpClient := &http.Client{Timeout: 10 * time.Second} // 10秒下载超时
+	resp, err := httpClient.Get(imageURL)
 	if err != nil {
-		log.Printf("图片解码失败 - 格式: %s, 错误: %v", originalFormat, err)
-		// 尝试直接使用原始数据作为Base64
-		log.Printf("尝试直接使用原始数据作为Base64")
-		base64Data := base64.StdEncoding.EncodeToString(fileData)
-		// 根据文件扩展名确定MIME类型
-		mimeType := "image/jpeg" // 默认
-		if fileHeader.Filename != "" {
-			ext := strings.ToLower(filepath.Ext(fileHeader.Filename))
-			switch ext {
-			case ".png":
-				mimeType = "image/png"
-			case ".jpg", ".jpeg":
-				mimeType = "image/jpeg"
-			case ".gif":
-				mimeType = "image/gif"
-			case ".webp":
-				mimeType = "image/webp"
-			}
-		}
-		log.Printf("使用原始数据Base64 - MIME类型: %s", mimeType)
-		return base64Data, mimeType, nil
+		return "", "", fmt.Errorf("无法下载图片 URL: %w", err)
 	}
-	log.Printf("图片解码成功 - 格式: %s, 尺寸: %dx%d", originalFormat, img.Bounds().Dx(), img.Bounds().Dy())
-
-	// 4. 缩放图片
-	const maxWidth uint = 1200
-	if img.Bounds().Dx() > int(maxWidth) {
-		img = resize.Resize(maxWidth, 0, img, resize.Lanczos3)
-		log.Printf("图片已缩放至宽度: %dpx", maxWidth)
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		return "", "", fmt.Errorf("下载图片 URL 失败, 状态码: %d", resp.StatusCode)
 	}
 
-	// 5. 将图片重编码为 JPEG
-	encodeStartTime := time.Now()
+	defer resp.Body.Close()
+	return processImageStream(resp.Body)
+}
+
+// processImageInput 统一处理图片输入（支持 fileHeader 或 imageURL）
+// 返回: base64编码的图片, MIME类型, 错误
+func processImageInput(fileHeader *multipart.FileHeader, imageURL string) (string, string, error) {
+	// 优先使用 fileHeader，其次使用 imageURL
+	if fileHeader != nil {
+		log.Printf("处理上传的文件: %s (大小: %d bytes)", fileHeader.Filename, fileHeader.Size)
+		return imageToBase64(fileHeader)
+	}
+
+	if imageURL != "" {
+		log.Printf("处理图片 URL: %s", imageURL)
+		return getBase64FromInput(imageURL)
+	}
+
+	return "", "", fmt.Errorf("没有提供图片文件或图片 URL")
+}
+
+func processImageStream(imageStream io.Reader) (string, string, error) {
+	img, originalFormat, err := image.Decode(imageStream)
+	if err != nil {
+		return "", "", fmt.Errorf("无法解码图片: %w", err)
+	}
+	log.Printf("图片原始格式: %s, 原始尺寸: %dx%d", originalFormat, img.Bounds().Dx(), img.Bounds().Dy())
+
+	const maxWidth uint = 1000
+	const maxHeight uint = 1000
+	if img.Bounds().Dx() > int(maxWidth) || img.Bounds().Dy() > int(maxHeight) {
+		img = resize.Resize(maxWidth, maxHeight, img, resize.Lanczos3)
+		log.Printf("图片已缩放至: %dx%d", img.Bounds().Dx(), img.Bounds().Dy())
+	}
+
 	buf := new(bytes.Buffer)
 	jpegOptions := &jpeg.Options{Quality: 80}
 	if err := jpeg.Encode(buf, img, jpegOptions); err != nil {
-		log.Printf("JPEG编码失败: %v", err)
 		return "", "", fmt.Errorf("无法将图片编码为 JPEG: %w", err)
 	}
-	encodeDuration := time.Since(encodeStartTime)
-	log.Printf("JPEG编码完成 (耗时: %v, 大小: %d bytes)", encodeDuration, buf.Len())
+	log.Printf("图片已重编码为 JPEG (质量: 80), 压缩后大小: %.2f KB", float64(buf.Len())/1024.0)
 
-	// 6. 编码为 Base64
-	base64StartTime := time.Now()
 	sEnc := base64.StdEncoding.EncodeToString(buf.Bytes())
-	base64Duration := time.Since(base64StartTime)
 
-	totalDuration := time.Since(startTime)
-	log.Printf("图片处理完成 - 总耗时: %v (编码: %v, Base64: %v), 最终大小: %d chars",
-		totalDuration, encodeDuration, base64Duration, len(sEnc))
-
-	// 7. 返回 Base64 和 JPEG 的 MIME 类型
 	return sEnc, "image/jpeg", nil
 }
 
@@ -136,7 +163,7 @@ func buildExtractorPrompt(officialName string, appType string) string {
 	} else if appType == "补打卡" {
 		appTypeContext = "补打卡（例如：系统截图、浏览器记录、能证明在办公区的时间记录）"
 	} else {
-		appTypeContext = appType
+		appTypeContext = appType + "（例如：能证明当前请假类型的有效单据、图片、截图等）"
 	}
 
 	return fmt.Sprintf(`
@@ -169,5 +196,5 @@ func buildExtractorPrompt(officialName string, appType string) string {
   "is_proof_type_valid": <true_or_false>, 
   "content": "<图片中的关键文字摘要>"
 }
-`, officialName, appType, appTypeContext) // <-- 注入所有上下文
+`, officialName, appType, appTypeContext)
 }

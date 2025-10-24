@@ -37,20 +37,28 @@ func NewQwenClient(url string, apiKey string) *QwenClient {
 }
 
 // ExtractDataFromImage 调用 Qwen API 提取图片数据
-func (c *QwenClient) ExtractDataFromImage(fileHeader *multipart.FileHeader, officialName string, appType string) (*model.ExtractedData, error) {
+// 支持 fileHeader（直接上传）或 imageURL（URL下载）
+func (c *QwenClient) ExtractDataFromImage(fileHeader *multipart.FileHeader, imageURL string, officialName string, appType string) (*model.ExtractedData, error) {
 	startTime := time.Now()
-	log.Printf("Qwen开始处理图片 - 文件大小: %d bytes, 姓名: %s, 类型: %s",
-		fileHeader.Size, officialName, appType)
 
-	// 1. (调用共享函数)
+	// 记录输入来源
+	if fileHeader != nil {
+		log.Printf("Qwen开始处理图片 - 来源: 文件上传, 大小: %d bytes, 姓名: %s, 类型: %s",
+			fileHeader.Size, officialName, appType)
+	} else if imageURL != "" {
+		log.Printf("Qwen开始处理图片 - 来源: URL下载, URL: %s, 姓名: %s, 类型: %s",
+			imageURL, officialName, appType)
+	}
+
+	// 1. 统一处理图片输入（调用共享函数）
 	base64StartTime := time.Now()
-	base64Image, mimeType, err := imageToBase64(fileHeader)
+	base64Image, mimeType, err := processImageInput(fileHeader, imageURL)
 	base64Duration := time.Since(base64StartTime)
 	if err != nil {
-		log.Printf("图片转Base64失败 (耗时: %v): %v", base64Duration, err)
-		return nil, fmt.Errorf("图片转 Base64 失败: %w", err)
+		log.Printf("图片处理失败 (耗时: %v): %v", base64Duration, err)
+		return nil, fmt.Errorf("图片处理失败: %w", err)
 	}
-	log.Printf("图片转Base64完成 (耗时: %v, 大小: %d chars)", base64Duration, len(base64Image))
+	log.Printf("图片处理完成 (耗时: %v, Base64大小: %d chars)", base64Duration, len(base64Image))
 
 	// 2. (调用共享函数)
 	promptText := buildExtractorPrompt(officialName, appType)

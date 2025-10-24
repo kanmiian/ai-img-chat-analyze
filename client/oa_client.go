@@ -1,6 +1,8 @@
 package client
 
 import (
+	"fmt"
+	"log"
 	"net/http"
 	"time"
 )
@@ -17,6 +19,16 @@ type EmployeeData struct {
 	Alias  string `json:"alias"`
 }
 
+// AttendanceData OA系统返回的考勤数据
+type AttendanceData struct {
+	UserId         string `json:"user_id"`         // 员工ID
+	WorkDate       string `json:"work_date"`       // 工作日期 YYYY-MM-DD
+	WorkStartTime  string `json:"work_start_time"` // 上班时间 HH:mm
+	WorkEndTime    string `json:"work_end_time"`   // 下班时间 HH:mm
+	IsWorkDay      bool   `json:"is_work_day"`     // 是否工作日
+	AttendanceType string `json:"attendance_type"` // 考勤类型: normal, late, absent
+}
+
 func NewOaClient(baseURL string) *OaClient {
 	return &OaClient{
 		baseURL:    baseURL,
@@ -24,38 +36,40 @@ func NewOaClient(baseURL string) *OaClient {
 	}
 }
 
-// GetEmployeeData 从 OA 系统获取员工的基准数据
+// GetEmployeeData 从 OA 系统获取员工的基准数据 todo 调整员工信息的判断
 func (c *OaClient) GetEmployeeData(employeeID string) (*EmployeeData, error) {
-	//
-	// ---- 生产环境代码 (示例) ----
-	// reqURL := fmt.Sprintf("%s/employees/%s", c.baseURL, employeeID)
-	// req, err := http.NewRequest("GET", reqURL, nil)
-	// if err != nil {
-	// 	return nil, err
-	// }
-	// // (!! 可能需要添加认证，例如 Bearer Token)
-	// // req.Header.Set("Authorization", "Bearer YOUR_OA_API_TOKEN")
-	//
-	// resp, err := c.httpClient.Do(req)
-	// if err != nil {
-	// 	return nil, err
-	// }
-	// defer resp.Body.Close()
-	//
-	// if resp.StatusCode != http.StatusOK {
-	// 	return nil, fmt.Errorf("OA API 返回错误: %d", resp.StatusCode)
-	// }
-	//
-	// var data EmployeeData
-	// if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-	// 	return nil, err
-	// }
-	// return &data, nil
-	//
-
 	// 临时返回模拟数据（开发环境）
 	return &EmployeeData{
 		UserId: employeeID,
 		Alias:  "测试员工",
 	}, nil
+}
+
+// GetAttendanceData 从 OA 系统获取员工的考勤数据
+func (c *OaClient) GetAttendanceData(employeeID string, workDate string) (*AttendanceData, error) {
+	log.Printf("开始获取员工考勤数据 - EmployeeID: %s, WorkDate: %s", employeeID, workDate)
+	// todo 调取接口？ 或者是在请求的时候一起带过来
+	// 临时返回模拟数据（开发环境）
+	// 根据日期判断是否为工作日
+	parsedDate, err := time.Parse("2006-01-02", workDate)
+	if err != nil {
+		return nil, fmt.Errorf("日期格式错误: %w", err)
+	}
+
+	// 简单的工作日判断：周一到周五
+	weekday := parsedDate.Weekday()
+	isWorkDay := weekday >= time.Monday && weekday <= time.Friday
+
+	// 模拟考勤数据
+	attendanceData := &AttendanceData{
+		UserId:         employeeID,
+		WorkDate:       workDate,
+		WorkStartTime:  "09:00",
+		WorkEndTime:    "18:00",
+		IsWorkDay:      isWorkDay,
+		AttendanceType: "normal",
+	}
+
+	log.Printf("返回模拟考勤数据: %+v", attendanceData)
+	return attendanceData, nil
 }
