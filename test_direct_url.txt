@@ -1,0 +1,35 @@
+# 测试 analyze-volcano 接口 - 直接使用图片 URL（不进行 Base64 转换）
+
+# 说明：
+# - use_direct_url=true: 直接传递图片 URL 给 AI，不进行 Base64 转换
+# - use_direct_url=false 或不传: 默认进行 Base64 转换（保持向后兼容）
+
+# ============ 方式一：单张图片，直接使用 URL ============
+curl.exe -X POST http://localhost:8080/api/v1/analyze-volcano -F "user_id=12345" -F "alias=张三" -F "application_type=病假" -F "application_date=2025-01-24" -F "application_time=18:43" -F "reason=生病请假" -F "image_url=https://oa.shiyuegame.com/aetherupload/display/file/20250124/e1cf7a84900ad106b2ddd936abced53e.png/" -F "use_direct_url=true"
+
+# ============ 方式二：多张图片，直接使用 URL ============
+curl.exe -X POST http://localhost:8080/api/v1/analyze-volcano ^
+  -F "user_id=12345" ^
+  -F "alias=张三" ^
+  -F "application_type=病假" ^
+  -F "application_date=2025-01-24" ^
+  -F "application_time=18:32" ^
+  -F "reason=生病请假" ^
+  -F "image_urls[]=https://oa.shiyuegame.com/aetherupload/display/file/20250124/e1cf7a84900ad106b2ddd936abced53e.png/" ^
+  -F "image_urls[]=https://oa.shiyuegame.com/aetherupload/display/file/20250124/02bd29b81fdcd335958dcca17a608a1f.jpg/" ^
+  -F "use_direct_url=true"
+
+# ============ 方式三：一行命令（PowerShell） ============
+curl.exe -X POST http://localhost:8080/api/v1/analyze-volcano -F "user_id=12345" -F "alias=张三" -F "application_type=病假" -F "application_date=2025-01-24" -F "application_time=18:32" -F "reason=生病请假" -F "image_urls[]=https://oa.shiyuegame.com/aetherupload/display/file/20250124/e1cf7a84900ad106b2ddd936abced53e.png/" -F "image_urls[]=https://oa.shiyuegame.com/aetherupload/display/file/20250124/02bd29b81fdcd335958dcca17a608a1f.jpg/" -F "use_direct_url=true"
+
+# ============ 对比测试：使用 Base64 转换（默认） ============
+curl.exe -X POST http://localhost:8080/api/v1/analyze-volcano ^
+  -F "user_id=12345" ^
+  -F "alias=张三" ^
+  -F "application_type=病假" ^
+  -F "application_date=2025-01-24" ^
+  -F "application_time=18:32" ^
+  -F "reason=生病请假" ^
+  -F "image_urls[]=https://oa.shiyuegame.com/aetherupload/display/file/20250124/e1cf7a84900ad106b2ddd936abced53e.png/" ^
+  -F "image_urls[]=https://oa.shiyuegame.com/aetherupload/display/file/20250124/02bd29b81fdcd335958dcca17a608a1f.jpg/" ^
+  -F "use_direct_url=false"

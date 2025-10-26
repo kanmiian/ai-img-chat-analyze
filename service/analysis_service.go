@@ -91,8 +91,11 @@ func (s *AnalysisService) runAnalysis(appData model.ApplicationData, fileHeaders
 	var imagesAnalysis []model.ImageAnalysisDetail
 	totalImages := len(fileHeaders) + len(appData.ImageUrls)
 
-	log.Printf("开始AI分析 - Provider: %s, EmployeeName: %s, 总图片数: %d (文件: %d, URL: %d)",
-		provider, employeeName, totalImages, len(fileHeaders), len(appData.ImageUrls))
+			log.Printf("开始AI分析 - Provider: %s, EmployeeName: %s, 总图片数: %d (文件: %d, URL: %d), 直接使用URL: %s",
+		provider, employeeName, totalImages, len(fileHeaders), len(appData.ImageUrls), appData.UseDirectUrl)
+
+	// 判断是否直接使用 URL（不进行 Base64 转换）
+	useDirectUrl := appData.UseDirectUrl == "true"
 
 	// 5.1 处理上传的文件
 	for i, fileHeader := range fileHeaders {
@@ -112,9 +115,9 @@ func (s *AnalysisService) runAnalysis(appData model.ApplicationData, fileHeaders
 
 		switch provider {
 		case "qwen":
-			extractedData, err = s.qwenClient.ExtractDataFromImage(fileHeader, "", employeeName, appData.ApplicationType)
+			extractedData, err = s.qwenClient.ExtractDataFromImageWithOptions(fileHeader, "", employeeName, appData.ApplicationType, useDirectUrl)
 		case "volcano":
-			extractedData, err = s.volcanoClient.ExtractDataFromImage(fileHeader, "", employeeName, appData.ApplicationType)
+			extractedData, err = s.volcanoClient.ExtractDataFromImageWithOptions(fileHeader, "", employeeName, appData.ApplicationType, useDirectUrl)
 		default:
 			return nil, fmt.Errorf("未知的 AI provider: %s", provider)
 		}
@@ -169,9 +172,9 @@ func (s *AnalysisService) runAnalysis(appData model.ApplicationData, fileHeaders
 
 			switch provider {
 			case "qwen":
-				extractedData, err = s.qwenClient.ExtractDataFromImage(nil, imageURL, employeeName, appData.ApplicationType)
+				extractedData, err = s.qwenClient.ExtractDataFromImageWithOptions(nil, imageURL, employeeName, appData.ApplicationType, useDirectUrl)
 			case "volcano":
-				extractedData, err = s.volcanoClient.ExtractDataFromImage(nil, imageURL, employeeName, appData.ApplicationType)
+				extractedData, err = s.volcanoClient.ExtractDataFromImageWithOptions(nil, imageURL, employeeName, appData.ApplicationType, useDirectUrl)
 			default:
 				return nil, fmt.Errorf("未知的 AI provider: %s", provider)
 			}

@@ -1,0 +1,26 @@
+# 测试 analyze-volcano 接口 - 多图片 URL
+
+# 方式一：使用 image_urls[] 传递多个 URL（推荐）
+curl.exe -X POST http://localhost:8080/api/v1/analyze-volcano ^
+  -F "user_id=12345" ^
+  -F "alias=张三" ^
+  -F "application_type=病假" ^
+  -F "application_date=2025-01-24" ^
+  -F "application_time=18:32" ^
+  -F "reason=生病请假" ^
+  -F "image_urls[]=https://oa.shiyuegame.com/aetherupload/display/file/20250124/e1cf7a84900ad106b2ddd936abced53e.png/" ^
+  -F "image_urls[]=https://oa.shiyuegame.com/aetherupload/display/file/20250124/02bd29b81fdcd335958dcca17a608a1f.jpg/"
+
+# 方式二：一行命令（Windows PowerShell）
+curl.exe -X POST http://localhost:8080/api/v1/analyze-volcano -F "user_id=12345" -F "alias=张三" -F "application_type=病假" -F "application_date=2025-01-24" -F "application_time=18:32" -F "reason=生病请假" -F "image_urls[]=https://oa.shiyuegame.com/aetherupload/display/file/20250124/e1cf7a84900ad106b2ddd936abced53e.png/" -F "image_urls[]=https://oa.shiyuegame.com/aetherupload/display/file/20250124/02bd29b81fdcd335958dcca17a608a1f.jpg/"
+
+# 方式三：混合使用 image_url 和 image_urls[]
+curl.exe -X POST http://localhost:8080/api/v1/analyze-volcano ^
+  -F "user_id=12345" ^
+  -F "alias=张三" ^
+  -F "application_type=补打卡" ^
+  -F "application_date=2025-01-24" ^
+  -F "application_time=09:05" ^
+  -F "reason=忘记打卡" ^
+  -F "image_url=https://oa.shiyuegame.com/aetherupload/display/file/20250124/e1cf7a84900ad106b2ddd936abced53e.png/" ^
+  -F "image_urls[]=https://oa.shiyuegame.com/aetherupload/display/file/20250124/02bd29b81fdcd335958dcca17a608a1f.jpg/"

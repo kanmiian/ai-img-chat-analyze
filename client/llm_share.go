@@ -13,8 +13,10 @@ import (
 	_ "image/gif"
 	_ "image/png"
 
-	_ "golang.org/x/image/bmp"
-	_ "golang.org/x/image/webp"
+	// 移除对 golang.org/x/image 的依赖
+	// 如果后续需要支持 BMP 和 WebP，可以使用 github.com/disintegration/imaging 替代
+	// _ "golang.org/x/image/bmp"
+	// _ "golang.org/x/image/webp"
 
 	"log"
 	"mime/multipart"
@@ -123,6 +125,41 @@ func processImageInput(fileHeader *multipart.FileHeader, imageURL string) (strin
 	if imageURL != "" {
 		log.Printf("处理图片 URL: %s", imageURL)
 		return getBase64FromInput(imageURL)
+	}
+
+	return "", "", fmt.Errorf("没有提供图片文件或图片 URL")
+}
+
+// processImageInputWithDirectUrl 处理图片输入，支持直接使用 URL 或 Base64 转换
+// useDirectUrl: "true" 表示直接使用 URL，不进行 Base64 转换；否则进行 Base64 转换
+// 返回: (data URI 格式的内容, MIME类型, 错误)
+func processImageInputWithDirectUrl(fileHeader *multipart.FileHeader, imageURL string, useDirectUrl string) (string, string, error) {
+	// 如果 useDirectUrl 为 "true"，直接返回 URL（不进行 Base64 转换）
+	if useDirectUrl == "true" && imageURL != "" {
+		log.Printf("直接使用图片 URL（不进行 Base64 转换）: %s", imageURL)
+		// 返回可以直接使用的 URL
+		return imageURL, "", nil
+	}
+
+	// 否则使用原有的 Base64 转换逻辑
+	if fileHeader != nil {
+		log.Printf("处理上传的文件: %s (大小: %d bytes)", fileHeader.Filename, fileHeader.Size)
+		base64Image, mimeType, err := imageToBase64(fileHeader)
+		if err != nil {
+			return "", "", err
+		}
+		dataURI := fmt.Sprintf("data:%s;base64,%s", mimeType, base64Image)
+		return dataURI, mimeType, nil
+	}
+
+	if imageURL != "" {
+		log.Printf("处理图片 URL（Base64 转换）: %s", imageURL)
+		base64Image, mimeType, err := getBase64FromInput(imageURL)
+		if err != nil {
+			return "", "", err
+		}
+		dataURI := fmt.Sprintf("data:%s;base64,%s", mimeType, base64Image)
+		return dataURI, mimeType, nil
 	}
 
 	return "", "", fmt.Errorf("没有提供图片文件或图片 URL")

@@ -1,0 +1,10 @@
+# 测试 analyze-volcano 接口 - 带图片 URL
+
+# 基本请求（事假，不需要图片验证）
+curl.exe -X POST http://localhost:8080/api/v1/analyze-volcano -F "user_id=12345" -F "alias=张三" -F "application_type=事假" -F "application_date=2025-01-20" -F "application_time=09:00" -F "reason=个人私事"
+
+# 带图片 URL 的请求（病假，需要图片验证）
+curl.exe -X POST http://localhost:8080/api/v1/analyze-volcano -F "user_id=12345" -F "alias=张三" -F "application_type=病假" -F "application_date=2025-01-24" -F "application_time=18:43" -F "reason=生病请假" -F "image_url=https://oa.shiyuegame.com/aetherupload/display/file/20250124/e1cf7a84900ad106b2ddd936abced53e.png/"
+
+# 补打卡请求（带图片）
+curl.exe -X POST http://localhost:8080/api/v1/analyze-volcano -F "user_id=12345" -F "alias=张三" -F "application_type=补打卡" -F "application_date=2025-01-24" -F "application_time=09:05" -F "reason=忘记打卡" -F "image_url=https://oa.shiyuegame.com/aetherupload/display/file/20250124/e1cf7a84900ad106b2ddd936abced53e.png/"

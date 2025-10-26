@@ -2,14 +2,15 @@ package model
 
 // ApplicationData OA 系统提交的表单数据
 type ApplicationData struct {
-	UserId          string   `form:"user_id"`          // 员工 ID
-	Alias           string   `form:"alias"`            // 员工姓名
-	ApplicationType string   `form:"application_type"` // 申请类型 (e.g., "补打卡", "病假")
-	ApplicationTime string   `form:"application_time"` // 申请的时间 (e.g., "09:00")
-	ApplicationDate string   `form:"application_date"` // 申请的日期 (e.g., "2025-10-21")
-	Reason          string   `form:"reason"`           // 申请理由 (文字)
-	ImageUrl        string   `form:"image_url"`        // 图片 URL（单个，向后兼容）
-	ImageUrls       []string `form:"image_urls[]"`     // 图片 URLs（多个）
+	UserId          string   `form:"user_id"`              // 员工 ID
+	Alias           string   `form:"alias"`                // 员工姓名
+	ApplicationType string   `form:"application_type"`     // 申请类型 (e.g., "补打卡", "病假")
+	ApplicationTime string   `form:"application_time"`     // 申请的时间 (e.g., "09:00")
+	ApplicationDate string   `form:"application_date"`     // 申请的日期 (e.g., "2025-10-21")
+	Reason          string   `form:"reason"`               // 申请理由 (文字)
+	ImageUrl        string   `form:"image_url"`            // 图片 URL（单个，向后兼容）
+	ImageUrls       []string `form:"image_urls[]"`         // 图片 URLs（多个）
+	UseDirectUrl    string   `form:"use_direct_url"`       // 是否直接使用图片 URL，不进行 Base64 转换（true/false）
 }
 
 // ExtractedData 是从(图片)中提取的结构化数据
