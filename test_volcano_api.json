@@ -1,0 +1,31 @@
+{
+  "接口说明": {
+    "地址": "POST /api/v1/test-volcano",
+    "用途": "OA系统调用火山引擎进行图片检查",
+    "返回": "简化的通过/不通过结果"
+  },
+  "请求参数": {
+    "user_id": "EMP001",
+    "alias": "张三", 
+    "application_type": "补打卡",
+    "application_time": "09:05",
+    "application_date": "2025-01-24",
+    "reason": "忘记打卡",
+    "image_urls[]": [
+      "https://oa.shiyuegame.com/aetherupload/display/file/20250124/e1cf7a84900ad106b2ddd936abced53e.png/",
+      "https://oa.shiyuegame.com/aetherupload/display/file/20250124/02bd29b81fdcd335958dcca17a608a1f.jpg/"
+    ]
+  },
+  "返回格式": {
+    "success": true,
+    "message": "正常",
+    "data": {
+      "is_abnormal": false,
+      "reason": "正常",
+      "valid_image_index": 1,
+      "total_images": 2,
+      "processing_time_ms": 1500
+    }
+  },
+  "curl命令示例": "curl -X POST http://localhost:8080/api/v1/test-volcano -F 'user_id=EMP001' -F 'alias=张三' -F 'application_type=补打卡' -F 'application_time=09:05' -F 'application_date=2025-01-24' -F 'reason=忘记打卡' -F 'image_urls[]=https://oa.shiyuegame.com/aetherupload/display/file/20250124/e1cf7a84900ad106b2ddd936abced53e.png/' -F 'image_urls[]=https://oa.shiyuegame.com/aetherupload/display/file/20250124/02bd29b81fdcd335958dcca17a608a1f.jpg/'"
+}

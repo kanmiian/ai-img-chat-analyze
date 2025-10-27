@@ -8,6 +8,8 @@ import (
 	"my-ai-app/config"
 	"my-ai-app/model"
 	"my-ai-app/rules"
+	"strings"
+	"sync"
 	"time"
 )
 
@@ -85,96 +87,59 @@ func (s *AnalysisService) runAnalysis(appData model.ApplicationData, fileHeaders
 		employeeName = oaEmployeeData.Alias
 	}
 
-	// 5. 处理多张图片，只要有一张满足条件即可
+	// 5. 并发处理多张图片
 	var validExtractedData *model.ExtractedData
 	var validImageIndex int
 	var imagesAnalysis []model.ImageAnalysisDetail
 	totalImages := len(fileHeaders) + len(appData.ImageUrls)
 
-	log.Printf("开始AI分析 - Provider: %s, EmployeeName: %s, 总图片数: %d (文件: %d, URL: %d)",
+	log.Printf("开始AI并发分析 - Provider: %s, EmployeeName: %s, 总图片数: %d (文件: %d, URL: %d)",
 		provider, employeeName, totalImages, len(fileHeaders), len(appData.ImageUrls))
 
-	// 5.1 处理上传的文件
-	for i, fileHeader := range fileHeaders {
-		imageIndex := i + 1
-		aiStartTime := time.Now()
-		log.Printf("分析第 %d/%d 张图片（文件上传，文件名: %s, 大小: %d bytes）",
-			imageIndex, totalImages, fileHeader.Filename, fileHeader.Size)
-
-		detail := model.ImageAnalysisDetail{
-			Index:    imageIndex,
-			Source:   "file_upload",
-			FileName: fileHeader.Filename,
-		}
-
-		var extractedData *model.ExtractedData
-		var err error
-
-		switch provider {
-		case "qwen":
-			extractedData, err = s.qwenClient.ExtractDataFromImage(fileHeader, "", employeeName, appData.ApplicationType)
-		case "volcano":
-			extractedData, err = s.volcanoClient.ExtractDataFromImage(fileHeader, "", employeeName, appData.ApplicationType)
-		default:
-			return nil, fmt.Errorf("未知的 AI provider: %s", provider)
-		}
-
-		aiDuration := time.Since(aiStartTime)
-		detail.ProcessingTimeMs = aiDuration.Milliseconds()
-
-		if err != nil {
-			detail.Success = false
-			detail.ErrorMessage = err.Error()
-			detail.IsValid = false
-			imagesAnalysis = append(imagesAnalysis, detail)
-
-			log.Printf("✗ 第 %d 张图片分析失败 (耗时: %v): %v", imageIndex, aiDuration, err)
-			continue
-		}
-
-		// 分析成功
-		detail.Success = true
-		detail.ExtractedData = extractedData
-		detail.IsValid = extractedData.IsProofTypeValid
-		imagesAnalysis = append(imagesAnalysis, detail)
-
-		log.Printf("第 %d 张图片分析完成 (耗时: %v): IsProofTypeValid=%v, ExtractedName=%s, RequestType=%s, Content=%s",
-			imageIndex, aiDuration, extractedData.IsProofTypeValid, extractedData.ExtractedName,
-			extractedData.RequestType, extractedData.Content)
-
-		// 检查是否满足条件（证明材料类型有效）
-		if validImageIndex == 0 && extractedData.IsProofTypeValid {
-			validExtractedData = extractedData
-			validImageIndex = imageIndex
-			log.Printf("✓ 第 %d 张图片满足条件，停止处理后续图片", imageIndex)
-			break
-		}
+	// 使用channel和goroutine并发处理
+	type analysisResult struct {
+		detail        model.ImageAnalysisDetail
+		extractedData *model.ExtractedData
+		index         int
+		err           error
 	}
 
-	// 5.2 处理 URL 图片
-	if validExtractedData == nil {
-		for i, imageURL := range appData.ImageUrls {
-			imageIndex := len(fileHeaders) + i + 1
+	resultChan := make(chan analysisResult, totalImages)
+	var wg sync.WaitGroup
+
+	// 5.1 并发处理上传的文件
+	for i, fileHeader := range fileHeaders {
+		wg.Add(1)
+		go func(index int, fh *multipart.FileHeader) {
+			defer wg.Done()
+
 			aiStartTime := time.Now()
-			log.Printf("分析第 %d/%d 张图片（URL下载: %s）", imageIndex, totalImages, imageURL)
+			log.Printf("并发分析第 %d/%d 张图片（文件上传，文件名: %s, 大小: %d bytes）",
+				index+1, totalImages, fh.Filename, fh.Size)
 
 			detail := model.ImageAnalysisDetail{
-				Index:    imageIndex,
-				Source:   "url_download",
-				ImageURL: imageURL,
+				Index:    index + 1,
+				Source:   "file_upload",
+				FileName: fh.Filename,
 			}
 
 			var extractedData *model.ExtractedData
+			var requestId string
+			var tokenUsage *model.TokenUsage
 			var err error
 
 			switch provider {
 			case "qwen":
-				extractedData, err = s.qwenClient.ExtractDataFromImage(nil, imageURL, employeeName, appData.ApplicationType)
+				extractedData, requestId, tokenUsage, err = s.qwenClient.ExtractDataFromImage(fh, "", employeeName, appData.ApplicationType, appData.ApplicationDate)
 			case "volcano":
-				extractedData, err = s.volcanoClient.ExtractDataFromImage(nil, imageURL, employeeName, appData.ApplicationType)
+				extractedData, requestId, tokenUsage, err = s.volcanoClient.ExtractDataFromImage(fh, "", employeeName, appData.ApplicationType, appData.ApplicationDate)
 			default:
-				return nil, fmt.Errorf("未知的 AI provider: %s", provider)
+				err = fmt.Errorf("未知的 AI provider: %s", provider)
 			}
+
+			// 设置requestId和tokenUsage
+			detail.RequestId = requestId
+			detail.TokenUsage = tokenUsage
 
 			aiDuration := time.Since(aiStartTime)
 			detail.ProcessingTimeMs = aiDuration.Milliseconds()
@@ -183,28 +148,108 @@ func (s *AnalysisService) runAnalysis(appData model.ApplicationData, fileHeaders
 				detail.Success = false
 				detail.ErrorMessage = err.Error()
 				detail.IsValid = false
-				imagesAnalysis = append(imagesAnalysis, detail)
-
-				log.Printf("✗ 第 %d 张图片分析失败 (耗时: %v): %v", imageIndex, aiDuration, err)
-				continue
+				log.Printf("✗ 第 %d 张图片分析失败 (耗时: %v): %v", index+1, aiDuration, err)
+			} else {
+				// 分析成功
+				detail.Success = true
+				detail.ExtractedData = extractedData
+				detail.IsValid = extractedData.IsProofTypeValid
+				log.Printf("第 %d 张图片分析完成 (耗时: %v): IsProofTypeValid=%v, ExtractedName=%s, RequestType=%s",
+					index+1, aiDuration, extractedData.IsProofTypeValid, extractedData.ExtractedName, extractedData.RequestType)
 			}
 
-			// 分析成功
-			detail.Success = true
-			detail.ExtractedData = extractedData
-			detail.IsValid = extractedData.IsProofTypeValid
-			imagesAnalysis = append(imagesAnalysis, detail)
+			resultChan <- analysisResult{
+				detail:        detail,
+				extractedData: extractedData,
+				index:         index,
+				err:           err,
+			}
+		}(i, fileHeader)
+	}
 
-			log.Printf("第 %d 张图片分析完成 (耗时: %v): IsProofTypeValid=%v, ExtractedName=%s, RequestType=%s, Content=%s",
-				imageIndex, aiDuration, extractedData.IsProofTypeValid, extractedData.ExtractedName,
-				extractedData.RequestType, extractedData.Content)
+	// 5.2 并发处理 URL 图片
+	for i, imageURL := range appData.ImageUrls {
+		wg.Add(1)
+		go func(index int, url string) {
+			defer wg.Done()
 
-			// 检查是否满足条件（证明材料类型有效）
-			if extractedData.IsProofTypeValid {
-				validExtractedData = extractedData
-				validImageIndex = imageIndex
-				log.Printf("✓ 第 %d 张图片满足条件，停止处理后续图片", imageIndex)
-				break
+			imageIndex := len(fileHeaders) + index + 1
+			aiStartTime := time.Now()
+			log.Printf("并发分析第 %d/%d 张图片（URL直传: %s）", imageIndex, totalImages, url)
+
+			detail := model.ImageAnalysisDetail{
+				Index:    imageIndex,
+				Source:   "url_download",
+				ImageURL: url,
+			}
+
+			var extractedData *model.ExtractedData
+			var requestId string
+			var tokenUsage *model.TokenUsage
+			var err error
+
+			switch provider {
+			case "qwen":
+				extractedData, requestId, tokenUsage, err = s.qwenClient.ExtractDataFromImage(nil, url, employeeName, appData.ApplicationType, appData.ApplicationDate)
+			case "volcano":
+				extractedData, requestId, tokenUsage, err = s.volcanoClient.ExtractDataFromImage(nil, url, employeeName, appData.ApplicationType, appData.ApplicationDate)
+			default:
+				err = fmt.Errorf("未知的 AI provider: %s", provider)
+			}
+
+			// 设置requestId和tokenUsage
+			detail.RequestId = requestId
+			detail.TokenUsage = tokenUsage
+
+			aiDuration := time.Since(aiStartTime)
+			detail.ProcessingTimeMs = aiDuration.Milliseconds()
+
+			if err != nil {
+				detail.Success = false
+				detail.ErrorMessage = err.Error()
+				detail.IsValid = false
+				log.Printf("✗ 第 %d 张图片分析失败 (耗时: %v): %v", imageIndex, aiDuration, err)
+			} else {
+				// 分析成功
+				detail.Success = true
+				detail.ExtractedData = extractedData
+				detail.IsValid = extractedData.IsProofTypeValid
+				log.Printf("第 %d 张图片分析完成 (耗时: %v): IsProofTypeValid=%v, ExtractedName=%s, RequestType=%s",
+					imageIndex, aiDuration, extractedData.IsProofTypeValid, extractedData.ExtractedName, extractedData.RequestType)
+			}
+
+			resultChan <- analysisResult{
+				detail:        detail,
+				extractedData: extractedData,
+				index:         len(fileHeaders) + index,
+				err:           err,
+			}
+		}(i, imageURL)
+	}
+
+	// 等待所有goroutine完成
+	go func() {
+		wg.Wait()
+		close(resultChan)
+	}()
+
+	// 收集结果
+	for result := range resultChan {
+		imagesAnalysis = append(imagesAnalysis, result.detail)
+
+		// 检查是否满足条件（证明材料类型有效）
+		if validImageIndex == 0 && result.extractedData != nil && result.extractedData.IsProofTypeValid {
+			validExtractedData = result.extractedData
+			validImageIndex = result.detail.Index
+			log.Printf("✓ 第 %d 张图片满足条件", result.detail.Index)
+		}
+	}
+
+	// 按索引排序结果
+	for i := 0; i < len(imagesAnalysis)-1; i++ {
+		for j := i + 1; j < len(imagesAnalysis); j++ {
+			if imagesAnalysis[i].Index > imagesAnalysis[j].Index {
+				imagesAnalysis[i], imagesAnalysis[j] = imagesAnalysis[j], imagesAnalysis[i]
 			}
 		}
 	}
@@ -233,20 +278,79 @@ func (s *AnalysisService) runAnalysis(appData model.ApplicationData, fileHeaders
 
 		// 图片都处理成功了，但都不满足条件
 		log.Printf("所有图片分析成功，但均不是有效的证明材料")
+
+		// 分析图片类型，提供具体的错误提示
+		var imageTypes []string
+		for _, detail := range imagesAnalysis {
+			if detail.Success && detail.ExtractedData != nil {
+				imageTypes = append(imageTypes, detail.ExtractedData.RequestType)
+			}
+		}
+
+		// 根据申请类型提供具体的证明材料要求
+		var reason string
+		switch appData.ApplicationType {
+		case "病假":
+			requiredProof := "病历单、处方单、诊断证明"
+			reason = fmt.Sprintf("提供的图片类型[%s]不符合%s申请要求，需要提供：%s",
+				strings.Join(imageTypes, "、"), appData.ApplicationType, requiredProof)
+		case "补打卡":
+			// 特殊处理补打卡，强调时间问题
+			reason = fmt.Sprintf("提供的图片均不能体现在%s的时间前已在公司上班", appData.ApplicationTime)
+		case "事假":
+			requiredProof := "相关证明文件"
+			reason = fmt.Sprintf("提供的图片类型[%s]不符合%s申请要求，需要提供：%s",
+				strings.Join(imageTypes, "、"), appData.ApplicationType, requiredProof)
+		default:
+			requiredProof := "相关证明材料"
+			reason = fmt.Sprintf("提供的图片类型[%s]不符合%s申请要求，需要提供：%s",
+				strings.Join(imageTypes, "、"), appData.ApplicationType, requiredProof)
+		}
+
 		return &model.AnalysisResult{
 			IsAbnormal:     true,
-			Reason:         "所有提供的图片均不是有效的证明材料",
+			Reason:         reason,
 			ImagesAnalysis: imagesAnalysis,
 		}, nil
 	}
 
-	// 7. 调用规则引擎进行最终裁决（只依赖 AI 判断，不使用 time_validation）
+	// 7. 尝试获取OA考勤数据（可选）
+	var oaAttendanceData *model.OaAttendanceData
+	if appData.UserId != "" && appData.ApplicationDate != "" {
+		attendanceStartTime := time.Now()
+		attendanceData, err := s.oaClient.GetAttendanceData(appData.UserId, appData.ApplicationDate)
+		attendanceDuration := time.Since(attendanceStartTime)
+		if err != nil {
+			log.Printf("获取OA考勤数据失败 (耗时: %v): %v", attendanceDuration, err)
+		} else {
+			log.Printf("获取到OA考勤数据 (耗时: %v): %+v", attendanceDuration, attendanceData)
+			// 转换为模型格式
+			oaAttendanceData = &model.OaAttendanceData{
+				Status:          attendanceData.AttendanceType,
+				ClockInTime:     attendanceData.WorkStartTime,
+				ClockOutTime:    attendanceData.WorkEndTime,
+				StandardInTime:  "09:00", // 默认值，可以从配置或OA系统获取
+				StandardOutTime: "18:00", // 默认值，可以从配置或OA系统获取
+			}
+		}
+	}
+
+	// 8. 调用规则引擎进行最终裁决
 	rulesStartTime := time.Now()
 	log.Printf("开始规则引擎验证")
-	result := rules.ValidateApplication(appData, validExtractedData)
+
+	// 构建所有图片的提取数据列表
+	var allExtractedData []*model.ExtractedData
+	for _, detail := range imagesAnalysis {
+		if detail.Success && detail.ExtractedData != nil {
+			allExtractedData = append(allExtractedData, detail.ExtractedData)
+		}
+	}
+
+	result := rules.ValidateApplication(appData, oaAttendanceData, allExtractedData)
 	rulesDuration := time.Since(rulesStartTime)
 
-	// 8. 添加详细分析结果
+	// 9. 添加详细分析结果
 	result.ValidImageIndex = validImageIndex
 	result.ImagesAnalysis = imagesAnalysis
 
@@ -256,4 +360,9 @@ func (s *AnalysisService) runAnalysis(appData model.ApplicationData, fileHeaders
 		totalDuration, result.IsAbnormal, result.Reason, validImageIndex)
 
 	return result, nil
+}
+
+// GetEmployeeData 获取员工考勤数据
+func (s *AnalysisService) GetEmployeeData(userId string) (*client.EmployeeData, error) {
+	return s.oaClient.GetEmployeeData(userId)
 }

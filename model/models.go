@@ -13,7 +13,6 @@ type ApplicationData struct {
 }
 
 // ExtractedData 是从(图片)中提取的结构化数据
-// (这个结构体可以保持不变，或者根据需要扩展)
 type ExtractedData struct {
 	ExtractedName    string `json:"extracted_name"`
 	RequestDate      string `json:"request_date"`
@@ -21,6 +20,10 @@ type ExtractedData struct {
 	RequestType      string `json:"request_type"`
 	IsProofTypeValid bool   `json:"is_proof_type_valid"`
 	Content          string `json:"content"`
+	// 新增字段用于补打卡特殊判断
+	IsCompanyInternal bool   `json:"is_company_internal"` // 是否为公司内部照片
+	IsChatRecord      bool   `json:"is_chat_record"`      // 是否为聊天记录
+	TimeFromContent   string `json:"time_from_content"`   // 从内容中提取的时间
 }
 
 // AttendanceData OA系统返回的考勤数据
@@ -43,17 +46,27 @@ type TimeValidationResult struct {
 	Details    string `json:"details"`     // 详细信息
 }
 
+// TokenUsage Token使用情况
+type TokenUsage struct {
+	CompletionTokens int `json:"completion_tokens"` // 生成的token数
+	PromptTokens     int `json:"prompt_tokens"`     // 输入的token数
+	TotalTokens      int `json:"total_tokens"`      // 总token数
+}
+
 // ImageAnalysisDetail 单张图片的分析详情
 type ImageAnalysisDetail struct {
-	Index            int            `json:"index"`                    // 图片索引（从1开始）
-	Source           string         `json:"source"`                   // 来源：file_upload 或 url_download
-	FileName         string         `json:"file_name,omitempty"`      // 文件名（文件上传时）
-	ImageURL         string         `json:"image_url,omitempty"`      // 图片URL（URL下载时）
-	Success          bool           `json:"success"`                  // 是否分析成功
-	ErrorMessage     string         `json:"error_message,omitempty"`  // 错误信息
-	ExtractedData    *ExtractedData `json:"extracted_data,omitempty"` // 提取的数据
-	ProcessingTimeMs int64          `json:"processing_time_ms"`       // 处理时间（毫秒）
-	IsValid          bool           `json:"is_valid"`                 // 是否为有效证明材料
+	Index            int            `json:"index"`                       // 图片索引（从1开始）
+	Source           string         `json:"source"`                      // 来源：file_upload 或 url_download
+	FileName         string         `json:"file_name,omitempty"`         // 文件名（文件上传时）
+	ImageURL         string         `json:"image_url,omitempty"`         // 图片URL（URL下载时）
+	RequestId        string         `json:"request_id,omitempty"`        // LLM请求ID（用于追踪）
+	TokenUsage       *TokenUsage    `json:"token_usage,omitempty"`       // Token使用情况
+	TotalDurationMs  int64          `json:"total_duration_ms,omitempty"` // 总耗时（毫秒，流式输出时使用）
+	Success          bool           `json:"success"`                     // 是否分析成功
+	ErrorMessage     string         `json:"error_message,omitempty"`     // 错误信息
+	ExtractedData    *ExtractedData `json:"extracted_data,omitempty"`    // 提取的数据
+	ProcessingTimeMs int64          `json:"processing_time_ms"`          // 处理时间（毫秒）
+	IsValid          bool           `json:"is_valid"`                    // 是否为有效证明材料
 }
 
 // AnalysisResult 是我们 API 统一的返回结构
@@ -62,6 +75,15 @@ type AnalysisResult struct {
 	Reason          string                `json:"reason"`
 	ValidImageIndex int                   `json:"valid_image_index,omitempty"` // 有效图片的索引（从1开始，0表示无）
 	ImagesAnalysis  []ImageAnalysisDetail `json:"images_analysis,omitempty"`   // 所有图片的分析详情
-	TimeValidation  *TimeValidationResult `json:"time_validation,omitempty"`   // 时间验证结果（已废弃）
+	TimeValidation  *TimeValidationResult `json:"time_validation,omitempty"`   // 时间验证结果
 	RawText         string                `json:"raw_text,omitempty"`          // 调试文本
+}
+
+// oa的考勤数据
+type OaAttendanceData struct {
+	Status          string `json:"status"`            // 例如: "正常", "迟到", "早退", "缺卡", "请假中"
+	ClockInTime     string `json:"clock_in_time"`     // 打卡上班时间 (HH:mm), "" 表示未打卡
+	ClockOutTime    string `json:"clock_out_time"`    // 打卡下班时间 (HH:mm), "" 表示未打卡
+	StandardInTime  string `json:"standard_in_time"`  // OA 系统定义的标准上班时间 (HH:mm), e.g., "09:00"
+	StandardOutTime string `json:"standard_out_time"` // OA 系统定义的标准下班时间 (HH:mm), e.g., "18:00"
 }

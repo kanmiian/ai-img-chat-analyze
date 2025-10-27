@@ -72,6 +72,98 @@ func (h *UploadHandler) AnalyzeVolcano(c *gin.Context) {
 	c.JSON(http.StatusOK, result)
 }
 
+// --- 火山引擎测试接口（简化版，供OA系统调用） ---
+func (h *UploadHandler) TestVolcanoSimple(c *gin.Context) {
+	startTime := time.Now()
+	log.Printf("收到火山引擎测试请求 - IP: %s", c.ClientIP())
+
+	// 1. 解析请求参数
+	var reqData struct {
+		UserId          string   `form:"user_id" binding:"required"`
+		Alias           string   `form:"alias" binding:"required"`
+		ApplicationType string   `form:"application_type" binding:"required"`
+		ApplicationTime string   `form:"application_time"`
+		ApplicationDate string   `form:"application_date"`
+		Reason          string   `form:"reason"`
+		ImageUrls       []string `form:"image_urls[]"`
+	}
+
+	if err := c.ShouldBind(&reqData); err != nil {
+		log.Printf("测试请求参数绑定失败: %v", err)
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "请求参数无效",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	// 2. 检查是否有图片
+	if len(reqData.ImageUrls) == 0 {
+		log.Printf("测试请求缺少图片")
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "必须提供至少一张图片",
+		})
+		return
+	}
+
+	// 3. 通过user_id获取员工考勤数据
+	log.Printf("获取员工考勤数据 - UserId: %s", reqData.UserId)
+	oaEmployeeData, err := h.analysisService.GetEmployeeData(reqData.UserId)
+	if err != nil {
+		log.Printf("获取员工考勤数据失败: %v", err)
+		// 如果获取失败，使用传入的alias作为备选
+		log.Printf("使用传入的alias作为备选: %s", reqData.Alias)
+	}
+
+	// 4. 构建应用数据
+	appData := model.ApplicationData{
+		UserId:          reqData.UserId,
+		Alias:           reqData.Alias,
+		ApplicationType: reqData.ApplicationType,
+		ApplicationTime: reqData.ApplicationTime,
+		ApplicationDate: reqData.ApplicationDate,
+		Reason:          reqData.Reason,
+		ImageUrls:       reqData.ImageUrls,
+	}
+
+	// 如果有考勤数据，使用考勤数据中的信息
+	if oaEmployeeData != nil {
+		log.Printf("使用OA考勤数据 - Alias: %s", oaEmployeeData.Alias)
+		appData.Alias = oaEmployeeData.Alias
+	}
+
+	// 5. 调用火山引擎分析
+	result, err := h.analysisService.AnalyzeWithVolcano(appData, nil)
+	totalDuration := time.Since(startTime)
+
+	if err != nil {
+		log.Printf("火山引擎测试分析异常 (总耗时: %v): %v", totalDuration, err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"message": "分析失败",
+			"error":   err.Error(),
+		})
+		return
+	}
+
+	// 6. 返回简化结果
+	log.Printf("火山引擎测试完成 (总耗时: %v) - 结果: IsAbnormal=%v", totalDuration, result.IsAbnormal)
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": !result.IsAbnormal, // 通过 = 不异常
+		"message": result.Reason,      // 原因
+		"data": gin.H{
+			"is_abnormal":        result.IsAbnormal,
+			"reason":             result.Reason,
+			"valid_image_index":  result.ValidImageIndex,
+			"total_images":       len(reqData.ImageUrls),
+			"processing_time_ms": totalDuration.Milliseconds(),
+		},
+	})
+}
+
 // --- 私有助手: 解析表单数据和可选的图片（支持多图片） ---
 func (h *UploadHandler) bindRequest(c *gin.Context) (model.ApplicationData, []*multipart.FileHeader, error) {
 	var appData model.ApplicationData
