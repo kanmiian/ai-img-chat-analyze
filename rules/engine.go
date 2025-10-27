@@ -4,9 +4,47 @@ import (
 	"fmt"
 	"log"
 	"my-ai-app/model"
+	"regexp"
 	"strings"
 	"time"
 )
+
+// normalizeTimeFormat 将各种时间格式转换为 HH:mm 格式
+func normalizeTimeFormat(timeStr string) (string, error) {
+	if timeStr == "" || timeStr == "未知" {
+		return "", fmt.Errorf("时间字符串为空或未知")
+	}
+
+	// 尝试不同的时间格式
+	layouts := []string{
+		"15:04",               // HH:mm
+		"2006-01-02 15:04:05", // Y-m-d H:i:s
+		"2006-01-02 15:04",    // Y-m-d H:i
+		"2006/01/02 15:04:05", // Y/m/d H:i:s
+		"2006/01/02 15:04",    // Y/m/d H:i
+		"01-02 15:04",         // m-d H:i
+		"01/02 15:04",         // m/d H:i
+	}
+
+	for _, layout := range layouts {
+		if t, err := time.Parse(layout, timeStr); err == nil {
+			return t.Format("15:04"), nil
+		}
+	}
+
+	// 尝试正则表达式提取时间
+	timeRegex := regexp.MustCompile(`(\d{1,2}):(\d{2})`)
+	if matches := timeRegex.FindStringSubmatch(timeStr); len(matches) >= 3 {
+		hour := matches[1]
+		minute := matches[2]
+		if len(hour) == 1 {
+			hour = "0" + hour
+		}
+		return hour + ":" + minute, nil
+	}
+
+	return "", fmt.Errorf("无法解析时间格式: %s", timeStr)
+}
 
 func compareTimes(timeStr1, timeStr2 string) (bool, error) {
 	layout := "15:04"
@@ -26,9 +64,20 @@ func ValidateApplication(appData model.ApplicationData, oaAttendance *model.OaAt
 	// todo 接入oa后，根据实际工作时间设置对应的弹性上班时间
 	const standardWorkTime = "09:00"
 
-	// (表单) 检查补卡时间
-	if appData.ApplicationType == "补打卡" && appData.ApplicationTime > standardWorkTime {
-		return &model.AnalysisResult{IsAbnormal: true, Reason: "迟到补卡"}
+	// 确定申请的时间范围
+	var startTime, endTime string
+	if appData.StartTime != "" && appData.EndTime != "" {
+		// 上下班卡同时申请
+		startTime = appData.StartTime
+		endTime = appData.EndTime
+		log.Printf("检测到上下班卡同时申请 - 上班时间: %s, 下班时间: %s", startTime, endTime)
+	} else if appData.ApplicationTime != "" {
+		// 向后兼容：单个时间申请
+		startTime = appData.ApplicationTime
+		endTime = ""
+		log.Printf("检测到单个时间申请 - 申请时间: %s", startTime)
+	} else {
+		return &model.AnalysisResult{IsAbnormal: true, Reason: "未提供申请时间"}
 	}
 
 	// 检查是否缺少必要的图片
@@ -91,24 +140,54 @@ func ValidateApplication(appData model.ApplicationData, oaAttendance *model.OaAt
 			log.Printf("AI 判定：证据类型[%s]有效", imageData.RequestType)
 		}
 
-		// 规则 4.4: 时间验证 (仅补打卡，逻辑不变)
+		// 规则 4.4: 时间验证 (仅补打卡，支持上下班时间)
 		if appData.ApplicationType == "补打卡" {
 			currentValidation.TimeOK = false // 补打卡必须验证时间
 			effectiveTime := imageData.RequestTime
 			if imageData.TimeFromContent != "" && imageData.TimeFromContent != "未知" {
 				effectiveTime = imageData.TimeFromContent
 			}
+
 			if effectiveTime == "未知" {
 				currentImageFailures = append(currentImageFailures, "补卡证明材料未识别到具体时间")
 			} else {
-				isLater, err := compareTimes(effectiveTime, appData.ApplicationTime)
+				// 标准化时间格式
+				normalizedTime, err := normalizeTimeFormat(effectiveTime)
 				if err != nil {
 					currentImageFailures = append(currentImageFailures, fmt.Sprintf("时间格式错误: %v", err))
-				} else if isLater {
-					currentImageFailures = append(currentImageFailures, fmt.Sprintf("证明材料时间[%s]晚于申请补卡时间[%s]，无法证明在申请时间前就在公司", effectiveTime, appData.ApplicationTime))
 				} else {
-					currentValidation.TimeOK = true
-					log.Printf("时间验证通过: 申请时间[%s], 证据时间[%s] (证据时间早于或等于申请时间)", appData.ApplicationTime, effectiveTime)
+					// 根据申请类型进行时间验证
+					if endTime != "" {
+						// 上下班卡同时申请：找最接近的时间进行比对
+						startValid, startErr := compareTimes(startTime, normalizedTime)
+						endValid, endErr := compareTimes(normalizedTime, endTime)
+
+						if startErr != nil || endErr != nil {
+							currentImageFailures = append(currentImageFailures, fmt.Sprintf("时间比较错误: %v", startErr))
+						} else if startValid && endValid {
+							// 图片时间在申请时间范围内
+							currentValidation.TimeOK = true
+							log.Printf("时间验证通过: 申请时间范围[%s-%s], 证据时间[%s] (在范围内)", startTime, endTime, normalizedTime)
+						} else {
+							// 图片时间不在申请时间范围内
+							if !startValid {
+								currentImageFailures = append(currentImageFailures, fmt.Sprintf("证明材料时间[%s]晚于上班申请时间[%s]，无法证明在上班时间前就在公司", normalizedTime, startTime))
+							} else {
+								currentImageFailures = append(currentImageFailures, fmt.Sprintf("证明材料时间[%s]早于下班申请时间[%s]，无法证明在下班时间后还在公司", normalizedTime, endTime))
+							}
+						}
+					} else {
+						// 单个时间申请：上班卡找早于等于，下班卡找晚于等于
+						isLater, err := compareTimes(normalizedTime, startTime)
+						if err != nil {
+							currentImageFailures = append(currentImageFailures, fmt.Sprintf("时间比较错误: %v", err))
+						} else if isLater {
+							currentImageFailures = append(currentImageFailures, fmt.Sprintf("证明材料时间[%s]晚于申请补卡时间[%s]，无法证明在申请时间前就在公司", normalizedTime, startTime))
+						} else {
+							currentValidation.TimeOK = true
+							log.Printf("时间验证通过: 申请时间[%s], 证据时间[%s] (证据时间早于或等于申请时间)", startTime, normalizedTime)
+						}
+					}
 				}
 			}
 		}

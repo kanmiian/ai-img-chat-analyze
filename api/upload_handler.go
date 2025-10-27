@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"mime/multipart"
+	"my-ai-app/client"
 	"my-ai-app/config"
 	"my-ai-app/model"
 	"my-ai-app/service"
@@ -77,26 +78,44 @@ func (h *UploadHandler) TestVolcanoSimple(c *gin.Context) {
 	startTime := time.Now()
 	log.Printf("收到火山引擎测试请求 - IP: %s", c.ClientIP())
 
-	// 1. 解析请求参数
+	// 添加原始请求参数调试
+	log.Printf("原始请求参数: %+v", c.Request.Form)
+	log.Printf("原始请求URL: %s", c.Request.URL.String())
+	log.Printf("Content-Type: %s", c.GetHeader("Content-Type"))
+
+	// 1. 解析请求参数（支持JSON和表单两种格式）
 	var reqData struct {
-		UserId          string   `form:"user_id" binding:"required"`
-		Alias           string   `form:"alias" binding:"required"`
-		ApplicationType string   `form:"application_type" binding:"required"`
-		ApplicationTime string   `form:"application_time"`
-		ApplicationDate string   `form:"application_date"`
-		Reason          string   `form:"reason"`
-		ImageUrls       []string `form:"image_urls[]"`
+		UserId          string   `json:"user_id" form:"user_id"`
+		Alias           string   `json:"alias" form:"alias"`
+		ApplicationType string   `json:"application_type" form:"application_type" binding:"required"`
+		ApplicationTime string   `json:"application_time" form:"application_time"` // 向后兼容
+		StartTime       string   `json:"start_time" form:"start_time"`             // 上班时间
+		EndTime         string   `json:"end_time" form:"end_time"`                 // 下班时间
+		ApplicationDate string   `json:"application_date" form:"application_date"`
+		Reason          string   `json:"reason" form:"reason"`
+		ImageUrls       []string `json:"image_urls" form:"image_urls[]"`
 	}
 
-	if err := c.ShouldBind(&reqData); err != nil {
-		log.Printf("测试请求参数绑定失败: %v", err)
-		c.JSON(http.StatusBadRequest, gin.H{
-			"success": false,
-			"message": "请求参数无效",
-			"error":   err.Error(),
-		})
-		return
+	// 尝试JSON绑定，失败则尝试表单绑定
+	if err := c.ShouldBindJSON(&reqData); err != nil {
+		log.Printf("JSON绑定失败，尝试表单绑定: %v", err)
+		if err := c.ShouldBind(&reqData); err != nil {
+			log.Printf("测试请求参数绑定失败: %v", err)
+			c.JSON(http.StatusBadRequest, gin.H{
+				"success": false,
+				"message": "请求参数无效",
+				"error":   err.Error(),
+			})
+			return
+		}
+		log.Printf("使用表单格式解析成功")
+	} else {
+		log.Printf("使用JSON格式解析成功")
 	}
+
+	// 添加调试日志查看接收到的参数
+	log.Printf("接收到的参数 - UserId: '%s', Alias: '%s', ApplicationType: '%s', ImageUrls长度: %d, ImageUrls内容: %v",
+		reqData.UserId, reqData.Alias, reqData.ApplicationType, len(reqData.ImageUrls), reqData.ImageUrls)
 
 	// 2. 检查是否有图片
 	if len(reqData.ImageUrls) == 0 {
@@ -108,13 +127,19 @@ func (h *UploadHandler) TestVolcanoSimple(c *gin.Context) {
 		return
 	}
 
-	// 3. 通过user_id获取员工考勤数据
-	log.Printf("获取员工考勤数据 - UserId: %s", reqData.UserId)
-	oaEmployeeData, err := h.analysisService.GetEmployeeData(reqData.UserId)
-	if err != nil {
-		log.Printf("获取员工考勤数据失败: %v", err)
-		// 如果获取失败，使用传入的alias作为备选
-		log.Printf("使用传入的alias作为备选: %s", reqData.Alias)
+	// 3. 通过user_id获取员工考勤数据（如果提供了user_id）
+	var oaEmployeeData *client.EmployeeData
+	if reqData.UserId != "" {
+		log.Printf("获取员工考勤数据 - UserId: %s", reqData.UserId)
+		var err error
+		oaEmployeeData, err = h.analysisService.GetEmployeeData(reqData.UserId)
+		if err != nil {
+			log.Printf("获取员工考勤数据失败: %v", err)
+			// 如果获取失败，使用传入的alias作为备选
+			log.Printf("使用传入的alias作为备选: %s", reqData.Alias)
+		}
+	} else {
+		log.Printf("未提供UserId，跳过OA数据获取")
 	}
 
 	// 4. 构建应用数据
@@ -122,7 +147,9 @@ func (h *UploadHandler) TestVolcanoSimple(c *gin.Context) {
 		UserId:          reqData.UserId,
 		Alias:           reqData.Alias,
 		ApplicationType: reqData.ApplicationType,
-		ApplicationTime: reqData.ApplicationTime,
+		ApplicationTime: reqData.ApplicationTime, // 向后兼容
+		StartTime:       reqData.StartTime,       // 上班时间
+		EndTime:         reqData.EndTime,         // 下班时间
 		ApplicationDate: reqData.ApplicationDate,
 		Reason:          reqData.Reason,
 		ImageUrls:       reqData.ImageUrls,
@@ -132,6 +159,10 @@ func (h *UploadHandler) TestVolcanoSimple(c *gin.Context) {
 	if oaEmployeeData != nil {
 		log.Printf("使用OA考勤数据 - Alias: %s", oaEmployeeData.Alias)
 		appData.Alias = oaEmployeeData.Alias
+	} else if reqData.Alias == "" {
+		// 如果既没有OA数据也没有传入alias，使用默认值
+		log.Printf("未提供Alias，使用默认值")
+		appData.Alias = "未知用户"
 	}
 
 	// 5. 调用火山引擎分析
@@ -148,12 +179,14 @@ func (h *UploadHandler) TestVolcanoSimple(c *gin.Context) {
 		return
 	}
 
-	// 6. 返回简化结果
+	// 6. 返回详细结果（与OA系统期望的格式一致）
 	log.Printf("火山引擎测试完成 (总耗时: %v) - 结果: IsAbnormal=%v", totalDuration, result.IsAbnormal)
 
 	c.JSON(http.StatusOK, gin.H{
-		"success": !result.IsAbnormal, // 通过 = 不异常
-		"message": result.Reason,      // 原因
+		"success":     !result.IsAbnormal, // 通过 = 不异常
+		"message":     result.Reason,      // 原因
+		"is_abnormal": result.IsAbnormal,  // 直接返回，方便OA系统使用
+		"reason":      result.Reason,      // 失败原因
 		"data": gin.H{
 			"is_abnormal":        result.IsAbnormal,
 			"reason":             result.Reason,

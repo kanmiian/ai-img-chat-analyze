@@ -5,7 +5,9 @@ type ApplicationData struct {
 	UserId          string   `form:"user_id"`          // 员工 ID
 	Alias           string   `form:"alias"`            // 员工姓名
 	ApplicationType string   `form:"application_type"` // 申请类型 (e.g., "补打卡", "病假")
-	ApplicationTime string   `form:"application_time"` // 申请的时间 (e.g., "09:00")
+	ApplicationTime string   `form:"application_time"` // 申请的时间 (e.g., "09:00") - 向后兼容
+	StartTime       string   `form:"start_time"`       // 上班时间 (e.g., "09:00")
+	EndTime         string   `form:"end_time"`         // 下班时间 (e.g., "18:00")
 	ApplicationDate string   `form:"application_date"` // 申请的日期 (e.g., "2025-10-21")
 	Reason          string   `form:"reason"`           // 申请理由 (文字)
 	ImageUrl        string   `form:"image_url"`        // 图片 URL（单个，向后兼容）
