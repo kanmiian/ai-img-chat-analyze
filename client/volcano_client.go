@@ -47,7 +47,7 @@ func NewVolcanoClient(url string, apiKey string) *VolcanoClient {
 // ExtractDataFromImage 调用火山 API 提取图片数据
 // 支持 fileHeader（直接上传）或 imageURL（URL直传）
 // 返回：提取的数据、请求ID、Token使用情况、错误
-func (c *VolcanoClient) ExtractDataFromImage(fileHeader *multipart.FileHeader, imageURL string, officialName string, appType string, applicationDate string) (*model.ExtractedData, string, *model.TokenUsage, error) {
+func (c *VolcanoClient) ExtractDataFromImage(fileHeader *multipart.FileHeader, imageURL string, officialName string, appType string, applicationDate string, appStart string, appEnd string) (*model.ExtractedData, string, *model.TokenUsage, error) {
 	startTime := time.Now()
 
 	// 记录输入来源
@@ -70,11 +70,11 @@ func (c *VolcanoClient) ExtractDataFromImage(fileHeader *multipart.FileHeader, i
 	log.Printf("图片内容构建完成 (耗时: %v)", imageDuration)
 
 	// 2. 构建prompt
-	promptText := buildExtractorPrompt(officialName, appType, applicationDate)
+	promptText := buildExtractorPrompt(officialName, appType, applicationDate, appStart, appEnd)
 
 	// 3. 构建请求体
 	reqBody := VolcanoVisionRequest{
-		Model: "doubao-seed-1-6-251015", // todo 火山模型
+		Model: "doubao-seed-1-6-lite-251015", // todo 火山模型
 		Messages: []VisionMessage{
 			{
 				Role: "user",

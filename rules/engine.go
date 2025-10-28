@@ -220,6 +220,10 @@ func ValidateApplication(appData model.ApplicationData, oaAttendance *model.OaAt
 		} else {
 			currentValidation.TypeOK = true
 			log.Printf("AI 判定：证据类型[%s]有效", imageData.RequestType)
+			// 聊天记录特殊提示
+			if appData.ApplicationType == "补打卡" && imageData.RequestType == "聊天记录" {
+				log.Printf("图片类型: 聊天记录 (仍进行时间校验)")
+			}
 		}
 
 	SKIP_TYPE_FAILURE:
@@ -230,15 +234,19 @@ func ValidateApplication(appData model.ApplicationData, oaAttendance *model.OaAt
 			// 优先使用AI返回的候选列表
 			candidates := make([]string, 0, 8)
 			if len(imageData.CandidateTimes) > 0 {
+				// AI已经根据申请时间智能筛选，直接使用
 				candidates = append(candidates, imageData.CandidateTimes...)
+				log.Printf("时间候选: AI智能筛选=%v", imageData.CandidateTimes)
+			} else {
+				// AI未返回候选时间，使用单值字段
+				if imageData.RequestTime != "" && imageData.RequestTime != "未知" {
+					candidates = append(candidates, imageData.RequestTime)
+				}
+				if imageData.TimeFromContent != "" && imageData.TimeFromContent != "未知" {
+					candidates = append(candidates, imageData.TimeFromContent)
+				}
+				log.Printf("时间候选: request_time='%s', time_from_content='%s'", imageData.RequestTime, imageData.TimeFromContent)
 			}
-			if imageData.RequestTime != "" && imageData.RequestTime != "未知" {
-				candidates = append(candidates, imageData.RequestTime)
-			}
-			if imageData.TimeFromContent != "" && imageData.TimeFromContent != "未知" {
-				candidates = append(candidates, imageData.TimeFromContent)
-			}
-			log.Printf("时间候选: candidate_times=%v, request_time='%s', time_from_content='%s'", imageData.CandidateTimes, imageData.RequestTime, imageData.TimeFromContent)
 
 			// 选择规则：上班卡取最早；下班卡取最晚；区间优先取区间内，否则取最接近
 			pickExtremum := func(times []string, pickMax bool) (string, error) {
@@ -270,49 +278,64 @@ func ValidateApplication(appData model.ApplicationData, oaAttendance *model.OaAt
 			}
 
 			var effectiveTime string
-			if startTime != "" && endTime == "" {
-				// 上班卡：取最早
-				if t, err := pickExtremum(candidates, false); err == nil {
-					effectiveTime = t
-				} else {
-					effectiveTime = "未知"
-				}
-			} else if startTime == "" && endTime != "" {
-				// 下班卡：取最晚
-				if t, err := pickExtremum(candidates, true); err == nil {
-					effectiveTime = t
-				} else {
-					effectiveTime = "未知"
-				}
-			} else {
-				// 区间：优先取区间内
-				normalized := make([]string, 0, len(candidates))
-				for _, t := range candidates {
-					if nt, err := normalizeTimeFormat(t); err == nil {
-						normalized = append(normalized, nt)
-					}
-				}
-				inRange := func(nt string) bool {
-					sOK, _ := compareTimes(startTime, nt) // start > nt ?
-					eOK, _ := compareTimes(nt, endTime)   // nt > end ?
-					return !sOK && !eOK
-				}
-				for _, nt := range normalized {
-					if inRange(nt) {
+			if len(imageData.CandidateTimes) > 0 {
+				// AI已经智能筛选，直接使用第一个（最合适的）
+				if len(candidates) > 0 {
+					if nt, err := normalizeTimeFormat(candidates[0]); err == nil {
 						effectiveTime = nt
-						break
+					} else {
+						effectiveTime = "未知"
 					}
-				}
-				if effectiveTime == "" {
-					// 退化策略：若全部 < start 取最大；若全部 > end 取最小
-					if t, err := pickExtremum(normalized, false); err == nil {
-						effectiveTime = t
-					}
-				}
-				if effectiveTime == "" {
+				} else {
 					effectiveTime = "未知"
 				}
-				log.Printf("选用时间: '%s' (start='%s', end='%s')", effectiveTime, startTime, endTime)
+				log.Printf("选用时间: '%s' (AI智能筛选)", effectiveTime)
+			} else {
+				// AI未筛选，使用原有逻辑
+				if startTime != "" && endTime == "" {
+					// 上班卡：取最早
+					if t, err := pickExtremum(candidates, false); err == nil {
+						effectiveTime = t
+					} else {
+						effectiveTime = "未知"
+					}
+				} else if startTime == "" && endTime != "" {
+					// 下班卡：取最晚
+					if t, err := pickExtremum(candidates, true); err == nil {
+						effectiveTime = t
+					} else {
+						effectiveTime = "未知"
+					}
+				} else {
+					// 区间：优先取区间内
+					normalized := make([]string, 0, len(candidates))
+					for _, t := range candidates {
+						if nt, err := normalizeTimeFormat(t); err == nil {
+							normalized = append(normalized, nt)
+						}
+					}
+					inRange := func(nt string) bool {
+						sOK, _ := compareTimes(startTime, nt) // start > nt ?
+						eOK, _ := compareTimes(nt, endTime)   // nt > end ?
+						return !sOK && !eOK
+					}
+					for _, nt := range normalized {
+						if inRange(nt) {
+							effectiveTime = nt
+							break
+						}
+					}
+					if effectiveTime == "" {
+						// 退化策略：若全部 < start 取最大；若全部 > end 取最小
+						if t, err := pickExtremum(normalized, false); err == nil {
+							effectiveTime = t
+						}
+					}
+					if effectiveTime == "" {
+						effectiveTime = "未知"
+					}
+					log.Printf("选用时间: '%s' (start='%s', end='%s')", effectiveTime, startTime, endTime)
+				}
 			}
 
 			if effectiveTime == "未知" {

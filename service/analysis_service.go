@@ -107,9 +107,9 @@ func (s *AnalysisService) runAnalysis(appData model.ApplicationData, fileHeaders
 
 			switch provider {
 			case "qwen":
-				extractedData, requestId, tokenUsage, err = s.qwenClient.ExtractDataFromImage(fh, "", employeeName, appData.ApplicationType, appData.ApplicationDate)
+				extractedData, requestId, tokenUsage, err = s.qwenClient.ExtractDataFromImage(fh, "", employeeName, appData.ApplicationType, appData.ApplicationDate, appData.StartTime, appData.EndTime)
 			case "volcano":
-				extractedData, requestId, tokenUsage, err = s.volcanoClient.ExtractDataFromImage(fh, "", employeeName, appData.ApplicationType, appData.ApplicationDate)
+				extractedData, requestId, tokenUsage, err = s.volcanoClient.ExtractDataFromImage(fh, "", employeeName, appData.ApplicationType, appData.ApplicationDate, appData.StartTime, appData.EndTime)
 			default:
 				err = fmt.Errorf("未知的 AI provider: %s", provider)
 			}
@@ -167,9 +167,9 @@ func (s *AnalysisService) runAnalysis(appData model.ApplicationData, fileHeaders
 
 			switch provider {
 			case "qwen":
-				extractedData, requestId, tokenUsage, err = s.qwenClient.ExtractDataFromImage(nil, url, employeeName, appData.ApplicationType, appData.ApplicationDate)
+				extractedData, requestId, tokenUsage, err = s.qwenClient.ExtractDataFromImage(nil, url, employeeName, appData.ApplicationType, appData.ApplicationDate, appData.StartTime, appData.EndTime)
 			case "volcano":
-				extractedData, requestId, tokenUsage, err = s.volcanoClient.ExtractDataFromImage(nil, url, employeeName, appData.ApplicationType, appData.ApplicationDate)
+				extractedData, requestId, tokenUsage, err = s.volcanoClient.ExtractDataFromImage(nil, url, employeeName, appData.ApplicationType, appData.ApplicationDate, appData.StartTime, appData.EndTime)
 			default:
 				err = fmt.Errorf("未知的 AI provider: %s", provider)
 			}

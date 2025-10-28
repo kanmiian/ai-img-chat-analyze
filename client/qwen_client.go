@@ -39,7 +39,7 @@ func NewQwenClient(url string, apiKey string) *QwenClient {
 // ExtractDataFromImage 调用 Qwen API 提取图片数据
 // 支持 fileHeader（直接上传）或 imageURL（URL直传）
 // 返回：提取的数据、请求ID、Token使用情况、错误
-func (c *QwenClient) ExtractDataFromImage(fileHeader *multipart.FileHeader, imageURL string, officialName string, appType string, applicationDate string) (*model.ExtractedData, string, *model.TokenUsage, error) {
+func (c *QwenClient) ExtractDataFromImage(fileHeader *multipart.FileHeader, imageURL string, officialName string, appType string, applicationDate string, appStart string, appEnd string) (*model.ExtractedData, string, *model.TokenUsage, error) {
 	startTime := time.Now()
 
 	// 记录输入来源
@@ -62,7 +62,7 @@ func (c *QwenClient) ExtractDataFromImage(fileHeader *multipart.FileHeader, imag
 	log.Printf("图片内容构建完成 (耗时: %v)", imageDuration)
 
 	// 2. 构建prompt
-	promptText := buildExtractorPrompt(officialName, appType, applicationDate)
+	promptText := buildExtractorPrompt(officialName, appType, applicationDate, appStart, appEnd)
 
 	// 3. 构建请求体 (!! 使用 Qwen 特有结构 !!)
 	reqBody := QwenVisionRequest{
