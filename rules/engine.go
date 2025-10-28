@@ -66,11 +66,17 @@ func ValidateApplication(appData model.ApplicationData, oaAttendance *model.OaAt
 
 	// 确定申请的时间范围
 	var startTime, endTime string
-	if appData.StartTime != "" && appData.EndTime != "" {
-		// 上下班卡同时申请
+	if appData.StartTime != "" || appData.EndTime != "" {
+		// 提供了新字段（start_time 或 end_time）
 		startTime = appData.StartTime
 		endTime = appData.EndTime
-		log.Printf("检测到上下班卡同时申请 - 上班时间: %s, 下班时间: %s", startTime, endTime)
+		if startTime != "" && endTime != "" {
+			log.Printf("检测到上下班卡同时申请 - 上班时间: %s, 下班时间: %s", startTime, endTime)
+		} else if startTime != "" {
+			log.Printf("检测到上班卡申请 - 上班时间: %s", startTime)
+		} else {
+			log.Printf("检测到下班卡申请 - 下班时间: %s", endTime)
+		}
 	} else if appData.ApplicationTime != "" {
 		// 向后兼容：单个时间申请
 		startTime = appData.ApplicationTime
@@ -78,6 +84,58 @@ func ValidateApplication(appData model.ApplicationData, oaAttendance *model.OaAt
 		log.Printf("检测到单个时间申请 - 申请时间: %s", startTime)
 	} else {
 		return &model.AnalysisResult{IsAbnormal: true, Reason: "未提供申请时间"}
+	}
+
+	// 先进行“已有打卡则无需补卡”的快速判断
+	if appData.ApplicationType == "补打卡" && len(appData.AttendanceInfo) > 0 {
+		// 统一到 HH:mm 并去重
+		normalize := func(ts []string) []string {
+			out := make([]string, 0, len(ts))
+			seen := map[string]struct{}{}
+			for _, t := range ts {
+				if nt, err := normalizeTimeFormat(strings.TrimSpace(t)); err == nil {
+					if _, ok := seen[nt]; !ok {
+						seen[nt] = struct{}{}
+						out = append(out, nt)
+					}
+				}
+			}
+			return out
+		}
+
+		clockTimes := normalize(appData.AttendanceInfo)
+		var target string
+		if appData.StartTime != "" {
+			if nt, err := normalizeTimeFormat(appData.StartTime); err == nil {
+				target = nt
+			}
+		}
+		if appData.EndTime != "" { // 如果是下班卡，优先生效
+			if nt, err := normalizeTimeFormat(appData.EndTime); err == nil {
+				target = nt
+			}
+		}
+
+		if target != "" && len(clockTimes) > 0 {
+			// 查找最接近 target 的已有打卡点，判断是否已覆盖申请
+			// 规则：
+			// - 上班卡：存在 <= target 的打卡则认为已有打卡，无需补卡
+			// - 下班卡：存在 >= target 的打卡则认为已有打卡，无需补卡
+			isStart := appData.EndTime == ""
+			for _, ct := range clockTimes {
+				if isStart {
+					later, _ := compareTimes(ct, target)
+					if !later {
+						return &model.AnalysisResult{IsAbnormal: true, Reason: fmt.Sprintf("已有打卡记录%s，无需补卡", ct)}
+					}
+				} else {
+					earlier, _ := compareTimes(target, ct)
+					if !earlier {
+						return &model.AnalysisResult{IsAbnormal: true, Reason: fmt.Sprintf("已有打卡记录%s，无需补卡", ct)}
+					}
+				}
+			}
+		}
 	}
 
 	// 检查是否缺少必要的图片
@@ -132,60 +190,229 @@ func ValidateApplication(appData model.ApplicationData, oaAttendance *model.OaAt
 			log.Printf("日期验证通过: 申请日期[%s] = 图片日期[%s]", appData.ApplicationDate, imageData.RequestDate)
 		}
 
-		// 规则 4.3: 类型验证 (AI 判断，逻辑不变)
+		// 规则 4.3: 类型验证
 		if !imageData.IsProofTypeValid {
-			currentImageFailures = append(currentImageFailures, fmt.Sprintf("AI判定：证明材料类型[%s]与申请类型[%s]不符", imageData.RequestType, appData.ApplicationType))
+			rt := imageData.RequestType
+			if rt == "" || rt == "未知" {
+				rt = "无法识别的类型"
+			}
+
+			// 补打卡兜底纠偏：饭堂/消费/账单类直接视为有效
+			if appData.ApplicationType == "补打卡" {
+				lower := strings.ToLower(rt)
+				if strings.Contains(lower, "账单") || strings.Contains(lower, "消费") || strings.Contains(lower, "饭堂") || strings.Contains(lower, "食堂") || strings.Contains(lower, "小票") || strings.Contains(lower, "收银") || strings.Contains(lower, "票据") || strings.Contains(lower, "订单") || strings.Contains(lower, "支付") || strings.Contains(lower, "交易") || strings.Contains(lower, "就餐") || strings.Contains(lower, "餐饮") || strings.Contains(lower, "餐费") || strings.Contains(lower, "餐卡") {
+					currentValidation.TypeOK = true
+					log.Printf("类型纠偏：[%s] 视为补打卡有效证据", rt)
+					// 纠偏后跳过类型失败记录，避免重复日志
+					goto SKIP_TYPE_FAILURE
+				}
+			}
+
+			var reason string
+			if appData.ApplicationType == "补打卡" && rt == "聊天记录" {
+				// 对于聊天记录，先记录类型验证失败，等时间验证完成后再决定最终提示语
+				reason = "补打卡证明需提供有力清晰的在司真实证明，如 ①饭堂消费记录； ②电脑开机时间；③网页浏览或文件处理记录，当前是【聊天记录】"
+			} else {
+				reason = fmt.Sprintf("证据类型无效：检测为[%s]，与申请类型[%s]不匹配", rt, appData.ApplicationType)
+			}
+			currentImageFailures = append(currentImageFailures, reason)
+			log.Printf("类型验证未通过: %s", reason)
 		} else {
 			currentValidation.TypeOK = true
 			log.Printf("AI 判定：证据类型[%s]有效", imageData.RequestType)
 		}
 
-		// 规则 4.4: 时间验证 (仅补打卡，支持上下班时间)
+	SKIP_TYPE_FAILURE:
+
+		// 时间点验证
 		if appData.ApplicationType == "补打卡" {
-			currentValidation.TimeOK = false // 补打卡必须验证时间
-			effectiveTime := imageData.RequestTime
+			currentValidation.TimeOK = false
+			// 优先使用AI返回的候选列表
+			candidates := make([]string, 0, 8)
+			if len(imageData.CandidateTimes) > 0 {
+				candidates = append(candidates, imageData.CandidateTimes...)
+			}
+			if imageData.RequestTime != "" && imageData.RequestTime != "未知" {
+				candidates = append(candidates, imageData.RequestTime)
+			}
 			if imageData.TimeFromContent != "" && imageData.TimeFromContent != "未知" {
-				effectiveTime = imageData.TimeFromContent
+				candidates = append(candidates, imageData.TimeFromContent)
+			}
+			log.Printf("时间候选: candidate_times=%v, request_time='%s', time_from_content='%s'", imageData.CandidateTimes, imageData.RequestTime, imageData.TimeFromContent)
+
+			// 选择规则：上班卡取最早；下班卡取最晚；区间优先取区间内，否则取最接近
+			pickExtremum := func(times []string, pickMax bool) (string, error) {
+				best := ""
+				for _, t := range times {
+					nt, err := normalizeTimeFormat(t)
+					if err != nil {
+						continue
+					}
+					if best == "" {
+						best = nt
+						continue
+					}
+					isAfter, _ := compareTimes(nt, best)
+					if pickMax {
+						if isAfter {
+							best = nt
+						}
+					} else {
+						if !isAfter {
+							best = nt
+						}
+					}
+				}
+				if best == "" {
+					return "", fmt.Errorf("无有效时间")
+				}
+				return best, nil
+			}
+
+			var effectiveTime string
+			if startTime != "" && endTime == "" {
+				// 上班卡：取最早
+				if t, err := pickExtremum(candidates, false); err == nil {
+					effectiveTime = t
+				} else {
+					effectiveTime = "未知"
+				}
+			} else if startTime == "" && endTime != "" {
+				// 下班卡：取最晚
+				if t, err := pickExtremum(candidates, true); err == nil {
+					effectiveTime = t
+				} else {
+					effectiveTime = "未知"
+				}
+			} else {
+				// 区间：优先取区间内
+				normalized := make([]string, 0, len(candidates))
+				for _, t := range candidates {
+					if nt, err := normalizeTimeFormat(t); err == nil {
+						normalized = append(normalized, nt)
+					}
+				}
+				inRange := func(nt string) bool {
+					sOK, _ := compareTimes(startTime, nt) // start > nt ?
+					eOK, _ := compareTimes(nt, endTime)   // nt > end ?
+					return !sOK && !eOK
+				}
+				for _, nt := range normalized {
+					if inRange(nt) {
+						effectiveTime = nt
+						break
+					}
+				}
+				if effectiveTime == "" {
+					// 退化策略：若全部 < start 取最大；若全部 > end 取最小
+					if t, err := pickExtremum(normalized, false); err == nil {
+						effectiveTime = t
+					}
+				}
+				if effectiveTime == "" {
+					effectiveTime = "未知"
+				}
+				log.Printf("选用时间: '%s' (start='%s', end='%s')", effectiveTime, startTime, endTime)
 			}
 
 			if effectiveTime == "未知" {
-				currentImageFailures = append(currentImageFailures, "补卡证明材料未识别到具体时间")
+				msg := "未识别到有效时间（图片可能无时间信息或无法解析）"
+				currentImageFailures = append(currentImageFailures, msg)
+				log.Printf("时间验证未通过: %s", msg)
 			} else {
 				// 标准化时间格式
 				normalizedTime, err := normalizeTimeFormat(effectiveTime)
 				if err != nil {
-					currentImageFailures = append(currentImageFailures, fmt.Sprintf("时间格式错误: %v", err))
+					msg := fmt.Sprintf("时间格式错误（无法解析为HH:mm）: %v", err)
+					currentImageFailures = append(currentImageFailures, msg)
+					log.Printf("时间验证未通过: %s", msg)
 				} else {
 					// 根据申请类型进行时间验证
-					if endTime != "" {
-						// 上下班卡同时申请：找最接近的时间进行比对
+					if startTime != "" && endTime != "" {
+						// 上下班卡同时申请：图片时间必须在申请时间范围内
 						startValid, startErr := compareTimes(startTime, normalizedTime)
 						endValid, endErr := compareTimes(normalizedTime, endTime)
-
 						if startErr != nil || endErr != nil {
 							currentImageFailures = append(currentImageFailures, fmt.Sprintf("时间比较错误: %v", startErr))
 						} else if startValid && endValid {
-							// 图片时间在申请时间范围内
 							currentValidation.TimeOK = true
 							log.Printf("时间验证通过: 申请时间范围[%s-%s], 证据时间[%s] (在范围内)", startTime, endTime, normalizedTime)
 						} else {
-							// 图片时间不在申请时间范围内
 							if !startValid {
-								currentImageFailures = append(currentImageFailures, fmt.Sprintf("证明材料时间[%s]晚于上班申请时间[%s]，无法证明在上班时间前就在公司", normalizedTime, startTime))
+								msg := fmt.Sprintf("证据时间[%s]晚于上班时间[%s]，不满足上班卡≤规则", normalizedTime, startTime)
+								currentImageFailures = append(currentImageFailures, msg)
+								log.Printf("时间验证未通过: %s", msg)
 							} else {
-								currentImageFailures = append(currentImageFailures, fmt.Sprintf("证明材料时间[%s]早于下班申请时间[%s]，无法证明在下班时间后还在公司", normalizedTime, endTime))
+								msg := fmt.Sprintf("证据时间[%s]早于下班时间[%s]，不满足下班卡≥规则", normalizedTime, endTime)
+								currentImageFailures = append(currentImageFailures, msg)
+								log.Printf("时间验证未通过: %s", msg)
 							}
 						}
-					} else {
-						// 单个时间申请：上班卡找早于等于，下班卡找晚于等于
+					} else if startTime != "" {
+						// 只有上班时间：图片时间必须早于或等于上班时间
 						isLater, err := compareTimes(normalizedTime, startTime)
 						if err != nil {
-							currentImageFailures = append(currentImageFailures, fmt.Sprintf("时间比较错误: %v", err))
+							msg := fmt.Sprintf("时间比较错误: %v", err)
+							currentImageFailures = append(currentImageFailures, msg)
+							log.Printf("时间验证未通过: %s", msg)
 						} else if isLater {
-							currentImageFailures = append(currentImageFailures, fmt.Sprintf("证明材料时间[%s]晚于申请补卡时间[%s]，无法证明在申请时间前就在公司", normalizedTime, startTime))
+							msg := fmt.Sprintf("证据时间[%s]晚于上班时间[%s]，不满足上班卡≤规则", normalizedTime, startTime)
+							currentImageFailures = append(currentImageFailures, msg)
+							log.Printf("时间验证未通过: %s", msg)
+							// 如果是聊天记录，更新提示语
+							if imageData.RequestType == "聊天记录" {
+								for j, failure := range currentImageFailures {
+									if strings.Contains(failure, "补打卡证明需提供有力清晰的在司真实证明") {
+										currentImageFailures[j] = "时间验证不通过，补打卡证明需提供有力清晰的在司真实证明，如 ①饭堂消费记录； ②电脑开机时间；③网页浏览或文件处理记录，当前是【聊天记录】"
+										break
+									}
+								}
+							}
 						} else {
 							currentValidation.TimeOK = true
-							log.Printf("时间验证通过: 申请时间[%s], 证据时间[%s] (证据时间早于或等于申请时间)", startTime, normalizedTime)
+							log.Printf("时间验证通过: 上班申请时间[%s], 证据时间[%s] (证据时间早于或等于上班时间)", startTime, normalizedTime)
+							// 如果是聊天记录，更新提示语
+							if imageData.RequestType == "聊天记录" {
+								for j, failure := range currentImageFailures {
+									if strings.Contains(failure, "补打卡证明需提供有力清晰的在司真实证明") {
+										currentImageFailures[j] = "时间验证通过，补打卡证明需提供有力清晰的在司真实证明，如 ①饭堂消费记录； ②电脑开机时间；③网页浏览或文件处理记录，当前是【聊天记录】"
+										break
+									}
+								}
+							}
+						}
+					} else if endTime != "" {
+						// 只有下班时间：图片时间必须晚于或等于下班时间
+						isEarlier, err := compareTimes(endTime, normalizedTime)
+						if err != nil {
+							msg := fmt.Sprintf("时间比较错误: %v", err)
+							currentImageFailures = append(currentImageFailures, msg)
+							log.Printf("时间验证未通过: %s", msg)
+						} else if isEarlier {
+							msg := fmt.Sprintf("证据时间[%s]早于下班时间[%s]，不满足下班卡≥规则", normalizedTime, endTime)
+							currentImageFailures = append(currentImageFailures, msg)
+							log.Printf("时间验证未通过: %s", msg)
+							// 如果是聊天记录，更新提示语
+							if imageData.RequestType == "聊天记录" {
+								for j, failure := range currentImageFailures {
+									if strings.Contains(failure, "补打卡证明需提供有力清晰的在司真实证明") {
+										currentImageFailures[j] = "时间验证不通过，补打卡证明需提供有力清晰的在司真实证明，如 ①饭堂消费记录； ②电脑开机时间；③网页浏览或文件处理记录，当前是【聊天记录】"
+										break
+									}
+								}
+							}
+						} else {
+							currentValidation.TimeOK = true
+							log.Printf("时间验证通过: 下班申请时间[%s], 证据时间[%s] (证据时间晚于或等于下班时间)", endTime, normalizedTime)
+							// 如果是聊天记录，更新提示语
+							if imageData.RequestType == "聊天记录" {
+								for j, failure := range currentImageFailures {
+									if strings.Contains(failure, "补打卡证明需提供有力清晰的在司真实证明") {
+										currentImageFailures[j] = "时间验证通过，补打卡证明需提供有力清晰的在司真实证明，如 ①饭堂消费记录； ②电脑开机时间；③网页浏览或文件处理记录，当前是【聊天记录】"
+										break
+									}
+								}
+							}
 						}
 					}
 				}
@@ -197,7 +424,7 @@ func ValidateApplication(appData model.ApplicationData, oaAttendance *model.OaAt
 			passedImageIndex = i + 1
 			break
 		} else {
-			failureSummary := fmt.Sprintf("图片 %d 失败: (%s)", i+1, strings.Join(currentImageFailures, "；"))
+			failureSummary := fmt.Sprintf("图片验证失败: (%s)", strings.Join(currentImageFailures, "；"))
 			log.Println(failureSummary)
 			allImageFailures = append(allImageFailures, failureSummary)
 		}
@@ -212,14 +439,14 @@ func ValidateApplication(appData model.ApplicationData, oaAttendance *model.OaAt
 			timeWarning = fmt.Sprintf(" (OA考勤时间: %s-%s)", oaAttendance.StandardInTime, oaAttendance.StandardOutTime)
 		}
 
-		finalReason := fmt.Sprintf("正常 (图片 %d/%d 验证通过)%s", passedImageIndex, len(imageList), timeWarning)
+		finalReason := fmt.Sprintf("时间检测通过 (图片信息 验证通过)%s", timeWarning)
 
 		return &model.AnalysisResult{
 			IsAbnormal: false,
 			Reason:     finalReason,
 		}
 	} else {
-		finalReason := "所有图片均未通过验证：" + strings.Join(allImageFailures, " | ")
+		finalReason := strings.Join(allImageFailures, " | ")
 		log.Println(finalReason)
 		return &model.AnalysisResult{
 			IsAbnormal: true,

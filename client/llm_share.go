@@ -125,8 +125,7 @@ func buildExtractorPrompt(appName string, appType string, appDate string) string
 	if appType == "病假" {
 		appTypeContext = "请病假（例如：病历单、处方单、诊断证明）"
 	} else if appType == "补打卡" {
-		// (!! 关键修改 !!) 我们不再提“办公区”，只提“时间”
-		appTypeContext = "补打卡（关键是证明工作时间，例如：聊天记录、系统截图、或任何显示日期和时间的电脑桌面截图）"
+		appTypeContext = "补打卡（关键是证明工作时间，例如：饭堂/食堂消费记录、系统/网页操作记录、电脑开关机时间、聊天记录、系统截图、或任何显示日期和时间的电脑桌面截图）"
 	} else {
 		appTypeContext = appType + "（例如：能证明当前请假类型的有效单据、图片、截图等）"
 	}
@@ -152,13 +151,18 @@ func buildExtractorPrompt(appName string, appType string, appDate string) string
 1.  **extracted_name**: 图片中医患相关的姓名（优先患者，甄别医生）。
 2.  **request_date**: 图片中的日期 (yyyy-MM-dd)。如果只有月日，请结合申请日期 (%s) 推断年份。
 3.  **request_time**: 图片中的时间 (HH:mm)。(如果图片是桌面截图，这是关键信息)
+3b. **candidate_times**: (数组) 若为聊天记录或出现多条时间，请返回当天所有与申请相关的时间集合 (HH:mm)。
 4.  **request_type**: 图片的类型 (例如: "病历单", "聊天记录", "桌面截图", "未知")。
 5.  **is_proof_type_valid**: (布尔值) 这张图片能否作为"%s"申请的**有效证据**？
-    * **!! 补打卡特别规则 !!**: 如果申请类型是 "补打卡"，**任何**能清晰证明一个**日期**和**时间**的图片（如聊天记录、桌面/系统截图）都应被视为 **true**。*"是否在办公区" (is_company_internal) 可以作为参考，但不是判断 'is_proof_type_valid' 的必要条件。*
+    * **!! 补打卡特别规则 !!**: 如果申请类型是 "补打卡"，以下类型**必须**视为有效证据（返回 true）：
+      - **饭堂/食堂消费记录**：任何包含"饭堂/食堂/消费/就餐/餐饮/餐费/餐卡"字样的图片，包括"账单详情"、"消费记录"、"支付记录"等
+      - **系统操作记录**：电脑开关机、网页浏览、软件操作等带明确日期时间的截图
+      - **聊天记录**：虽然时间可能有效，但建议提供更直接的办公证明
+    * **重要**：只要图片能清晰体现日期与时间，且属于上述类型之一，**必须返回 true**，不要因为"不在办公区"而拒绝。
     * **病假规则**: 如果申请 "病假"，"病历单" 或 "诊断证明" 是 **true**。
     * **其他**: 如果类型不匹配 (如用 "病历单" 补打卡)，则为 **false**。
 6.  **content**: 图片中的关键文字摘要 (如诊断结果或聊天内容)。
-7.  **is_company_internal**: (布尔值) 图片是否显示为公司内部（如工位、办公环境）？(例如 "城市夜景壁纸" 应为 false)。
+7.  **is_company_internal**: (布尔值) 图片是否显示为公司内部（如工位、办公环境等）？。
 8.  **is_chat_record**: (布尔值) 图片是否为聊天记录截图？
 9.  **time_from_content**: (HH:mm) 如果是聊天记录或截图，从内容中提取的时间。
 
@@ -177,7 +181,8 @@ func buildExtractorPrompt(appName string, appType string, appDate string) string
   "content": "...",
   "is_company_internal": <true_or_false>,
   "is_chat_record": <true_or_false>,
-  "time_from_content": "..."
+  "time_from_content": "...",
+  "candidate_times": ["08:59", "09:02", "18:32"]
 }
-`, appNameContext, appType, appTypeContext, appDate, appDate, appType) // 注入上下文
+`, appNameContext, appType, appTypeContext, appDate, appDate, appType)
 }

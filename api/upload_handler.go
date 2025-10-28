@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 	"mime/multipart"
-	"my-ai-app/client"
 	"my-ai-app/config"
 	"my-ai-app/model"
 	"my-ai-app/service"
@@ -83,6 +82,12 @@ func (h *UploadHandler) TestVolcanoSimple(c *gin.Context) {
 	log.Printf("原始请求URL: %s", c.Request.URL.String())
 	log.Printf("Content-Type: %s", c.GetHeader("Content-Type"))
 
+	// 添加multipart表单调试
+	if form, err := c.MultipartForm(); err == nil && form != nil {
+		log.Printf("MultipartForm Values: %+v", form.Value)
+		log.Printf("MultipartForm Files: %+v", form.File)
+	}
+
 	// 1. 解析请求参数（支持JSON和表单两种格式）
 	var reqData struct {
 		UserId          string   `json:"user_id" form:"user_id"`
@@ -94,6 +99,7 @@ func (h *UploadHandler) TestVolcanoSimple(c *gin.Context) {
 		ApplicationDate string   `json:"application_date" form:"application_date"`
 		Reason          string   `json:"reason" form:"reason"`
 		ImageUrls       []string `json:"image_urls" form:"image_urls[]"`
+		AttendanceInfo  []string `json:"attendance_info" form:"attendance_info[]"`
 	}
 
 	// 尝试JSON绑定，失败则尝试表单绑定
@@ -114,8 +120,8 @@ func (h *UploadHandler) TestVolcanoSimple(c *gin.Context) {
 	}
 
 	// 添加调试日志查看接收到的参数
-	log.Printf("接收到的参数 - UserId: '%s', Alias: '%s', ApplicationType: '%s', ImageUrls长度: %d, ImageUrls内容: %v",
-		reqData.UserId, reqData.Alias, reqData.ApplicationType, len(reqData.ImageUrls), reqData.ImageUrls)
+	log.Printf("接收到的参数 - UserId: '%s', Alias: '%s', ApplicationType: '%s', StartTime: '%s', EndTime: '%s', ApplicationTime: '%s', ImageUrls长度: %d, ImageUrls内容: %v",
+		reqData.UserId, reqData.Alias, reqData.ApplicationType, reqData.StartTime, reqData.EndTime, reqData.ApplicationTime, len(reqData.ImageUrls), reqData.ImageUrls)
 
 	// 2. 检查是否有图片
 	if len(reqData.ImageUrls) == 0 {
@@ -127,22 +133,7 @@ func (h *UploadHandler) TestVolcanoSimple(c *gin.Context) {
 		return
 	}
 
-	// 3. 通过user_id获取员工考勤数据（如果提供了user_id）
-	var oaEmployeeData *client.EmployeeData
-	if reqData.UserId != "" {
-		log.Printf("获取员工考勤数据 - UserId: %s", reqData.UserId)
-		var err error
-		oaEmployeeData, err = h.analysisService.GetEmployeeData(reqData.UserId)
-		if err != nil {
-			log.Printf("获取员工考勤数据失败: %v", err)
-			// 如果获取失败，使用传入的alias作为备选
-			log.Printf("使用传入的alias作为备选: %s", reqData.Alias)
-		}
-	} else {
-		log.Printf("未提供UserId，跳过OA数据获取")
-	}
-
-	// 4. 构建应用数据
+	// 3. 构建应用数据
 	appData := model.ApplicationData{
 		UserId:          reqData.UserId,
 		Alias:           reqData.Alias,
@@ -153,13 +144,20 @@ func (h *UploadHandler) TestVolcanoSimple(c *gin.Context) {
 		ApplicationDate: reqData.ApplicationDate,
 		Reason:          reqData.Reason,
 		ImageUrls:       reqData.ImageUrls,
+		AttendanceInfo:  reqData.AttendanceInfo,
 	}
 
-	// 如果有考勤数据，使用考勤数据中的信息
-	if oaEmployeeData != nil {
-		log.Printf("使用OA考勤数据 - Alias: %s", oaEmployeeData.Alias)
-		appData.Alias = oaEmployeeData.Alias
-	} else if reqData.Alias == "" {
+	// 如果提供了新字段，优先使用新字段
+	if reqData.StartTime != "" || reqData.EndTime != "" {
+		log.Printf("使用新的时间字段 - StartTime: %s, EndTime: %s", reqData.StartTime, reqData.EndTime)
+	} else if reqData.ApplicationTime != "" {
+		log.Printf("使用向后兼容的时间字段 - ApplicationTime: %s", reqData.ApplicationTime)
+	} else {
+		log.Printf("警告: 未提供任何时间字段")
+	}
+
+	// 如果既没有传入alias，使用默认值
+	if reqData.Alias == "" {
 		// 如果既没有OA数据也没有传入alias，使用默认值
 		log.Printf("未提供Alias，使用默认值")
 		appData.Alias = "未知用户"

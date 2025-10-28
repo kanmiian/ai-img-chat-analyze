@@ -8,7 +8,6 @@ import (
 	"my-ai-app/config"
 	"my-ai-app/model"
 	"my-ai-app/rules"
-	"strings"
 	"sync"
 	"time"
 )
@@ -49,23 +48,7 @@ func (s *AnalysisService) runAnalysis(appData model.ApplicationData, fileHeaders
 	log.Printf("开始分析请求 - Provider: %s, UserId: %s, Alias: %s, Type: %s, 图片数量: %d",
 		provider, appData.UserId, appData.Alias, appData.ApplicationType, len(fileHeaders))
 
-	// 1. 尝试从 OA 系统获取员工考勤基准数据（可选，失败不影响主流程）
-	oaStartTime := time.Now()
-	var oaEmployeeData *client.EmployeeData
-	if appData.UserId != "" {
-		oaData, err := s.oaClient.GetEmployeeData(appData.UserId)
-		oaDuration := time.Since(oaStartTime)
-		if err != nil {
-			log.Printf("OA 系统获取员工数据失败 (耗时: %v): %v", oaDuration, err)
-		} else {
-			oaEmployeeData = oaData
-			log.Printf("OA 系统获取到员工数据 (耗时: %v): %+v", oaDuration, oaEmployeeData)
-		}
-	} else {
-		log.Printf("跳过OA查询 - 未提供UserId")
-	}
-
-	// 2. 检查是否有图片输入
+	// 1. 检查是否有图片输入
 	hasImages := len(fileHeaders) > 0 || len(appData.ImageUrls) > 0
 
 	// 3. 如果没有图片，检查是否必需
@@ -79,16 +62,10 @@ func (s *AnalysisService) runAnalysis(appData model.ApplicationData, fileHeaders
 		return &model.AnalysisResult{IsAbnormal: false, Reason: "正常"}, nil
 	}
 
-	// 4. 准备 AI 分析所需的参数
-	employeeName := ""
-	if appData.Alias != "" {
-		employeeName = appData.Alias
-	} else if oaEmployeeData != nil {
-		employeeName = oaEmployeeData.Alias
-	}
+	// 2. 准备 AI 分析所需的参数
+	employeeName := appData.Alias
 
 	// 5. 并发处理多张图片
-	var validExtractedData *model.ExtractedData
 	var validImageIndex int
 	var imagesAnalysis []model.ImageAnalysisDetail
 	totalImages := len(fileHeaders) + len(appData.ImageUrls)
@@ -239,7 +216,6 @@ func (s *AnalysisService) runAnalysis(appData model.ApplicationData, fileHeaders
 
 		// 检查是否满足条件（证明材料类型有效）
 		if validImageIndex == 0 && result.extractedData != nil && result.extractedData.IsProofTypeValid {
-			validExtractedData = result.extractedData
 			validImageIndex = result.detail.Index
 			log.Printf("✓ 第 %d 张图片满足条件", result.detail.Index)
 		}
@@ -254,88 +230,9 @@ func (s *AnalysisService) runAnalysis(appData model.ApplicationData, fileHeaders
 		}
 	}
 
-	// 6. 如果所有图片都不满足条件
-	if validExtractedData == nil {
-		log.Printf("所有图片均不满足条件")
+	// 6. 不再在此处提前生成简化原因，统一交由规则引擎产出详细失败原因
 
-		// 统计错误数量
-		errorCount := 0
-		for _, detail := range imagesAnalysis {
-			if !detail.Success {
-				errorCount++
-			}
-		}
-
-		if errorCount == len(imagesAnalysis) && errorCount > 0 {
-			// 所有图片都分析失败
-			log.Printf("所有 %d 张图片分析均失败", errorCount)
-			return &model.AnalysisResult{
-				IsAbnormal:     true,
-				Reason:         "所有图片分析均失败",
-				ImagesAnalysis: imagesAnalysis,
-			}, nil
-		}
-
-		// 图片都处理成功了，但都不满足条件
-		log.Printf("所有图片分析成功，但均不是有效的证明材料")
-
-		// 分析图片类型，提供具体的错误提示
-		var imageTypes []string
-		for _, detail := range imagesAnalysis {
-			if detail.Success && detail.ExtractedData != nil {
-				imageTypes = append(imageTypes, detail.ExtractedData.RequestType)
-			}
-		}
-
-		// 根据申请类型提供具体的证明材料要求
-		var reason string
-		switch appData.ApplicationType {
-		case "病假":
-			requiredProof := "病历单、处方单、诊断证明"
-			reason = fmt.Sprintf("提供的图片类型[%s]不符合%s申请要求，需要提供：%s",
-				strings.Join(imageTypes, "、"), appData.ApplicationType, requiredProof)
-		case "补打卡":
-			// 特殊处理补打卡，强调时间问题
-			reason = fmt.Sprintf("提供的图片均不能体现在%s的时间前已在公司上班", appData.ApplicationTime)
-		case "事假":
-			requiredProof := "相关证明文件"
-			reason = fmt.Sprintf("提供的图片类型[%s]不符合%s申请要求，需要提供：%s",
-				strings.Join(imageTypes, "、"), appData.ApplicationType, requiredProof)
-		default:
-			requiredProof := "相关证明材料"
-			reason = fmt.Sprintf("提供的图片类型[%s]不符合%s申请要求，需要提供：%s",
-				strings.Join(imageTypes, "、"), appData.ApplicationType, requiredProof)
-		}
-
-		return &model.AnalysisResult{
-			IsAbnormal:     true,
-			Reason:         reason,
-			ImagesAnalysis: imagesAnalysis,
-		}, nil
-	}
-
-	// 7. 尝试获取OA考勤数据（可选）
-	var oaAttendanceData *model.OaAttendanceData
-	if appData.UserId != "" && appData.ApplicationDate != "" {
-		attendanceStartTime := time.Now()
-		attendanceData, err := s.oaClient.GetAttendanceData(appData.UserId, appData.ApplicationDate)
-		attendanceDuration := time.Since(attendanceStartTime)
-		if err != nil {
-			log.Printf("获取OA考勤数据失败 (耗时: %v): %v", attendanceDuration, err)
-		} else {
-			log.Printf("获取到OA考勤数据 (耗时: %v): %+v", attendanceDuration, attendanceData)
-			// 转换为模型格式
-			oaAttendanceData = &model.OaAttendanceData{
-				Status:          attendanceData.AttendanceType,
-				ClockInTime:     attendanceData.WorkStartTime,
-				ClockOutTime:    attendanceData.WorkEndTime,
-				StandardInTime:  "09:00", // 默认值，可以从配置或OA系统获取
-				StandardOutTime: "18:00", // 默认值，可以从配置或OA系统获取
-			}
-		}
-	}
-
-	// 8. 调用规则引擎进行最终裁决
+	// 7. 调用规则引擎进行最终裁决
 	rulesStartTime := time.Now()
 	log.Printf("开始规则引擎验证")
 
@@ -347,10 +244,10 @@ func (s *AnalysisService) runAnalysis(appData model.ApplicationData, fileHeaders
 		}
 	}
 
-	result := rules.ValidateApplication(appData, oaAttendanceData, allExtractedData)
+	result := rules.ValidateApplication(appData, nil, allExtractedData)
 	rulesDuration := time.Since(rulesStartTime)
 
-	// 9. 添加详细分析结果
+	// 8. 添加详细分析结果
 	result.ValidImageIndex = validImageIndex
 	result.ImagesAnalysis = imagesAnalysis
 
