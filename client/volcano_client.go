@@ -138,7 +138,7 @@ func (c *VolcanoClient) ExtractDataFromImage(fileHeader *multipart.FileHeader, i
 	if err := json.Unmarshal(respBody, &llmResp); err != nil {
 		return nil, "", nil, fmt.Errorf("解析火山响应失败: %w, 响应: %s", err, string(respBody))
 	}
-
+	log.Printf("火山响应: %s", string(respBody))
 	// 9. 提取requestId和tokenUsage
 	requestId := llmResp.Id
 	var tokenUsage *model.TokenUsage

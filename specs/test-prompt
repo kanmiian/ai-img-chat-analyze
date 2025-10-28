@@ -1,0 +1,46 @@
+func buildExtractorPrompt(appName string, appType string, appDate string) string {
+    var appTypeRule string
+    switch appType {
+    case "病假":
+        appTypeRule = "需直接证明患病事实的凭证（核心：能体现诊断结果或就诊记录）"
+    case "补打卡":
+        appTypeRule = "需能明确证明特定时间点在岗状态的凭证（核心：含可追溯的日期+时间信息）"
+    default:
+        appTypeRule = fmt.Sprintf("需与「%s」申请目的直接相关的凭证（核心：能证明申请事项真实性）", appType)
+    }
+
+    var appNameContext string
+    if appName != "" {
+        appNameContext = fmt.Sprintf("1. 关联员工: %s（优先识别凭证中与申请人身份一致的姓名）", appName)
+    } else {
+        appNameContext = "1. 关联员工: 未提供（提取凭证中体现的申请人姓名）"
+    }
+
+    return fmt.Sprintf(`
+你是HR凭证审核助手，需基于以下规则分析图片内容：
+
+**基础信息**:
+%s
+2. 申请类型: %s
+3. 有效性核心规则: %s
+4. 申请提交日期: %s
+
+**提取并验证以下信息（严格JSON格式）**:
+{
+  "extracted_name": "凭证中体现的申请人姓名（排除无关人员）",
+  "request_date": "凭证中的日期(yyyy-MM-dd)，仅月日时结合申请日期补全年份",
+  "request_time": "凭证中的时间(HH:mm)（补打卡需重点提取）",
+  "voucher_type": "凭证具体类型（如病历单/聊天记录/系统截图等，需具体描述）",
+  "is_valid": "是否符合有效性规则？（补打卡需额外检查：凭证时间≤申请时间）",
+  "key_content": "凭证核心信息摘要（如诊断结论/聊天关键内容/时间记录等）",
+  "is_company_env": "是否显示公司内部环境（如工位/办公系统界面等）",
+  "is_chat_screenshot": "是否为聊天记录截图",
+  "content_time": "从凭证内容中提取的关键时间(HH:mm，无则留空)"
+}
+
+**关键判断逻辑**:
+1. 有效性优先看"凭证核心信息是否直接支撑申请类型"，而非仅看形式
+2. 补打卡额外校验时间先后关系，其他类型按"核心规则"判断关联性
+3. 类型描述需具体（例："医院电子诊断证明"优于"证明"）
+`, appNameContext, appType, appTypeRule, appDate)
+}

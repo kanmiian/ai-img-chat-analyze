@@ -216,7 +216,6 @@ func ValidateApplication(appData model.ApplicationData, oaAttendance *model.OaAt
 				reason = fmt.Sprintf("证据类型无效：检测为[%s]，与申请类型[%s]不匹配", rt, appData.ApplicationType)
 			}
 			currentImageFailures = append(currentImageFailures, reason)
-			log.Printf("类型验证未通过: %s", reason)
 		} else {
 			currentValidation.TypeOK = true
 			log.Printf("AI 判定：证据类型[%s]有效", imageData.RequestType)

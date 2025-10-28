@@ -12,7 +12,6 @@ type Config struct {
 	VolcanoApiURL string // 火山 API Endpoint
 	QwenApiKey    string // 通义千问 API Key
 	QwenApiURL    string // 通义千问 API Endpoint
-	OaApiBaseUrl  string // <-- OA 系统的数据 API 地址
 }
 
 // LoadConfig 从环境变量加载配置
@@ -23,7 +22,6 @@ func LoadConfig() *Config {
 		VolcanoApiURL: getEnv("VOLCANO_API_URL", ""),
 		QwenApiKey:    getEnv("QWEN_API_KEY", "sk-fc76b62ec90646d3ae38d02bfb1c3294"),
 		QwenApiURL:    getEnv("QWEN_API_URL", "https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation/generation"),
-		OaApiBaseUrl:  getEnv("OA_API_BASE_URL", "http://oa.local/api/oa"),
 	}
 
 	// 本地调试时，如果 docker-compose 不在运行，可以回退到 localhost

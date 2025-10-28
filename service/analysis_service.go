@@ -22,12 +22,9 @@ type AnalysisService struct {
 
 // NewAnalysisService 注入所有客户端
 func NewAnalysisService(cfg *config.Config) *AnalysisService {
-	oaClient := client.NewOaClient(cfg.OaApiBaseUrl)
 	return &AnalysisService{
 		qwenClient:    client.NewQwenClient(cfg.QwenApiURL, cfg.QwenApiKey),
 		volcanoClient: client.NewVolcanoClient(cfg.VolcanoApiURL, cfg.VolcanoApiKey),
-		oaClient:      oaClient,
-		timeValidator: NewTimeValidator(oaClient),
 	}
 }
 
