@@ -26,6 +26,7 @@ type VolcanoVisionRequest struct {
 	Messages    []VisionMessage `json:"messages"`
 	Stream      bool            `json:"stream,omitempty"`      // 是否使用流式输出
 	Temperature float64         `json:"temperature,omitempty"` // 温度参数
+	TopP        float64         `json:"top_p,omitempty"`       // TopP参数
 	MaxTokens   int             `json:"max_tokens,omitempty"`  // 最大token数
 	Thinking    *ThinkingConfig `json:"thinking,omitempty"`    // 深度思考模式配置
 }
@@ -71,10 +72,10 @@ func (c *VolcanoClient) ExtractDataFromImage(fileHeader *multipart.FileHeader, i
 
 	// 2. 构建prompt
 	promptText := buildExtractorPrompt(officialName, appType, applicationDate, appStart, appEnd)
-
+	log.Printf("火山prompt: %s", promptText)
 	// 3. 构建请求体
 	reqBody := VolcanoVisionRequest{
-		Model: "doubao-seed-1-6-lite-251015", // todo 火山模型
+		Model: "doubao-seed-1-6-flash-250828", // todo 火山模型
 		Messages: []VisionMessage{
 			{
 				Role: "user",
@@ -86,6 +87,7 @@ func (c *VolcanoClient) ExtractDataFromImage(fileHeader *multipart.FileHeader, i
 		},
 		Stream:      false, // 不使用流式输出
 		Temperature: 0.1,   // 低温度，提高准确性
+		TopP:        0.1,   // 高TopP，提高多样性
 		Thinking: &ThinkingConfig{
 			Type: "disabled", // 禁用深度思考模式
 		},

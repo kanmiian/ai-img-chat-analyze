@@ -26,7 +26,7 @@ func main() {
 	{
 		v1.POST("/analyze-qwen", uploadHandler.AnalyzeQwen)
 		v1.POST("/analyze-volcano", uploadHandler.AnalyzeVolcano)
-		v1.POST("/test-volcano", uploadHandler.TestVolcanoSimple) // 火山引擎测试接口
+		v1.POST("/check-by-volcano", uploadHandler.TestVolcanoSimple) // 火山引擎测试接口
 	}
 
 	log.Println("服务启动于 :8080")

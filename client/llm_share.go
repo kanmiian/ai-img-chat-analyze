@@ -110,7 +110,6 @@ func buildImageContentPart(fileHeader *multipart.FileHeader, imageURL string) (*
 
 	// 处理URL
 	if imageURL != "" {
-		log.Printf("直接传递URL（跳过下载和编码）: %s", imageURL)
 		return &ContentPart{
 			Type:     "image_url",
 			ImageURL: &ChatMessageImageURL{URL: imageURL},
@@ -127,27 +126,40 @@ func buildExtractorPrompt(appName string, appType string, appDate string, appSta
 	case "病假":
 		appTypeContext = "病历单、处方单、诊断证明"
 	case "补打卡":
-		appTypeContext = "饭堂消费/系统操作/电脑开关机记录、聊天记录、含时间的桌面截图（办公环境优先）"
+		appTypeContext = "饭堂消费/系统操作/电脑开关机记录、聊天记录、含时间的办公环境照片等"
 	default:
-		appTypeContext = fmt.Sprintf("能证明%s的有效单据/图片/截图（含时间的办公环境截图优先）", appType) // 补充办公环境截图优先
+		appTypeContext = fmt.Sprintf("能证明%s的有效单据/图片/截图（含时间的办公环境照片等优先）", appType)
+	}
+
+	// 根据申请类型动态调整姓名提取提示（病假→患者，其他→员工）
+	var nameExtractHint string
+	switch appType {
+	case "病假":
+		nameExtractHint = "患者/看诊人"
+	default:
+		nameExtractHint = "当事人/员工姓名"
 	}
 
 	var appNameContext string
 	if appName != "" {
-		appNameContext = "1. 目标员工姓名：" + fmt.Sprintf("%s（优先提取图片中患者/看诊人，排除医生）", appName)
+		appNameContext = fmt.Sprintf("1. 目标员工姓名：%s（优先提取图片中%s，排除无关人员如医生）", appName, nameExtractHint)
 	} else {
-		appNameContext = "1. 目标员工姓名：未提供，请提取图片中患者/看诊人姓名（排除医生）"
+		appNameContext = fmt.Sprintf("1. 目标员工姓名：未提供，请提取图片中%s姓名（排除无关人员如医生）", nameExtractHint)
 	}
 
 	appTime := displayAppTime(appStart, appEnd)
 
-	// 补打卡专属规则（补充聊天记录时间要求）
 	var punchRule string
 	if appType == "补打卡" {
-		punchRule = `**补打卡规则**：1. 办公环境桌面截图/聊天记录含时间为有效证据；2. 证明时间（含聊天记录/截图中的时间）≤申请日期；3. 上班卡选≤申请时间最近值，下班卡选≥申请时间最近值（桌面截图当前时间直接认定）；4. 最多返回5个候选时间`
+		punchRule = `**补打卡证据要求**：
+- 有效性条件（需同时满足）：
+  1. 证据类型属于以下之一：含时间的办公环境照片、聊天记录（含时间）、饭堂消费记录、系统操作记录、电脑开关机记录；
+  2. 证据中的日期（request_date，即图片日期）≤申请日期（上下文3中的申请日期）；
+- 时间提取规则：
+  1. 若申请为上班卡，优先选≤申请时间的最近时间；若为下班卡，优先选≥申请时间的最近时间（办公环境照片的显示时间直接认定为有效时间）；
+  2. 候选时间最多返回5个`
 	}
 
-	// 提取申请年份（用于补全日历单月日）
 	year := "（仅月日补此年份）"
 	if len(appDate) >= 4 {
 		year = appDate[:4] + year
@@ -165,20 +177,20 @@ func buildExtractorPrompt(appName string, appType string, appDate string, appSta
 %s
 
 **任务**：提取JSON（严格按格式）：
-- extracted_name：图片中患者/看诊人姓名（排除医生）
+- extracted_name：图片中%s姓名（排除无关人员如医生）
 - request_date：图片日期（yyyy-MM-dd，仅月日补%s）
 - request_time：图片时间（HH:mm，优先符合申请时间）
-- request_type：图片类型（病历单/聊天记录/桌面截图/未知）
-- is_proof_type_valid：是否为%s有效证据（补打卡需满足上述规则，病假需病历/诊断证明，其他类型需含时间的办公环境截图）
+- request_type：图片类型（病历单/聊天记录/含时间的办公环境照片/饭堂消费记录/系统操作记录/电脑开关机记录/未知）
+- is_proof_type_valid：是否为%s有效证据（补打卡需满足上述补打卡证据要求中的有效性条件；病假需为病历单、处方单或诊断证明；其他类型需为含时间的办公环境照片）
 - content：关键文字摘要（≤60字，不重复时间）
-- is_company_internal：是否为公司内部场景（如工位）
+- is_company_internal：是否为公司内部场景（如工位、饭堂、办公系统）
 - is_chat_record：是否为聊天记录
 - time_from_content：从聊天记录内容中提取的时间（HH:mm，无则空）
-- candidate_times：候选时间数组（当图片为聊天记录/桌面截图时，提取内容中所有时间点，最多5个）
+- candidate_times：候选时间数组（当图片为聊天记录/含时间的办公环境照片/饭堂消费记录/系统操作记录/电脑开关机记录时，提取内容中所有时间点，最多5个）
 
 **JSON格式**：
 {"extracted_name":"","request_date":"","request_time":"","request_type":"","is_proof_type_valid":true/false,"content":"","is_company_internal":true/false,"is_chat_record":false,"time_from_content":"","candidate_times":[]}
-`, appNameContext, appType, appTypeContext, appDate, appTime, punchRule, year, appType)
+`, appNameContext, appType, appTypeContext, appDate, appTime, punchRule, nameExtractHint, year, appType)
 }
 
 func displayAppTime(appStart, appEnd string) string {

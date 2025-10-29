@@ -79,8 +79,6 @@ func (h *UploadHandler) TestVolcanoSimple(c *gin.Context) {
 
 	// 添加原始请求参数调试
 	log.Printf("原始请求参数: %+v", c.Request.Form)
-	log.Printf("原始请求URL: %s", c.Request.URL.String())
-	log.Printf("Content-Type: %s", c.GetHeader("Content-Type"))
 
 	// 添加multipart表单调试
 	if form, err := c.MultipartForm(); err == nil && form != nil {
@@ -99,6 +97,7 @@ func (h *UploadHandler) TestVolcanoSimple(c *gin.Context) {
 		ApplicationDate string   `json:"application_date" form:"application_date"`
 		Reason          string   `json:"reason" form:"reason"`
 		ImageUrls       []string `json:"image_urls" form:"image_urls[]"`
+		ImageBase64     string   `json:"image_base64" form:"image_base64"` // 新增：base64图片
 		AttendanceInfo  []string `json:"attendance_info" form:"attendance_info[]"`
 	}
 
@@ -120,15 +119,15 @@ func (h *UploadHandler) TestVolcanoSimple(c *gin.Context) {
 	}
 
 	// 添加调试日志查看接收到的参数
-	log.Printf("接收到的参数 - UserId: '%s', Alias: '%s', ApplicationType: '%s', StartTime: '%s', EndTime: '%s', ApplicationTime: '%s', ImageUrls长度: %d, ImageUrls内容: %v",
-		reqData.UserId, reqData.Alias, reqData.ApplicationType, reqData.StartTime, reqData.EndTime, reqData.ApplicationTime, len(reqData.ImageUrls), reqData.ImageUrls)
+	log.Printf("接收到的参数 - UserId: '%s', Alias: '%s', ApplicationType: '%s', StartTime: '%s', EndTime: '%s', ApplicationTime: '%s', ImageUrls长度: %d, ImageUrls内容: %v, ImageBase64长度: %d",
+		reqData.UserId, reqData.Alias, reqData.ApplicationType, reqData.StartTime, reqData.EndTime, reqData.ApplicationTime, len(reqData.ImageUrls), reqData.ImageUrls, len(reqData.ImageBase64))
 
-	// 2. 检查是否有图片
-	if len(reqData.ImageUrls) == 0 {
-		log.Printf("测试请求缺少图片")
+	// 2. 检查是否有图片（支持URL和base64两种方式）
+	if len(reqData.ImageUrls) == 0 && reqData.ImageBase64 == "" {
+		log.Printf("测试请求缺少图片（既无image_urls也无image_base64）")
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
-			"message": "必须提供至少一张图片",
+			"message": "必须提供至少一张图片（image_urls或image_base64）",
 		})
 		return
 	}
@@ -145,6 +144,14 @@ func (h *UploadHandler) TestVolcanoSimple(c *gin.Context) {
 		Reason:          reqData.Reason,
 		ImageUrls:       reqData.ImageUrls,
 		AttendanceInfo:  reqData.AttendanceInfo,
+	}
+
+	// 如果有base64图片，将其转换为URL格式添加到ImageUrls中
+	if reqData.ImageBase64 != "" {
+		// 为base64图片生成一个临时的data URI
+		dataURI := "data:image/jpeg;base64," + reqData.ImageBase64
+		appData.ImageUrls = append(appData.ImageUrls, dataURI)
+		log.Printf("添加base64图片到ImageUrls，当前ImageUrls长度: %d", len(appData.ImageUrls))
 	}
 
 	// 如果提供了新字段，优先使用新字段
