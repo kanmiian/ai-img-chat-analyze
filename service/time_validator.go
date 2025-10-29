@@ -3,39 +3,24 @@ package service
 import (
 	"fmt"
 	"log"
-	"my-ai-app/client"
 	"my-ai-app/model"
 	"strings"
 	"time"
 )
 
 // TimeValidator 时间验证器
-type TimeValidator struct {
-	oaClient *client.OaClient
-}
+type TimeValidator struct{}
 
 // NewTimeValidator 创建时间验证器
-func NewTimeValidator(oaClient *client.OaClient) *TimeValidator {
-	return &TimeValidator{
-		oaClient: oaClient,
-	}
-}
+func NewTimeValidator() *TimeValidator { return &TimeValidator{} }
 
 // ValidateApplicationTime 验证申请时间的有效性
 func (tv *TimeValidator) ValidateApplicationTime(appData model.ApplicationData) (*model.TimeValidationResult, error) {
 	log.Printf("开始验证申请时间 - UserId: %s, Date: %s, Time: %s, Type: %s",
 		appData.UserId, appData.ApplicationDate, appData.ApplicationTime, appData.ApplicationType)
 
-	// 1. 从OA系统获取考勤数据
-	attendanceData, err := tv.oaClient.GetAttendanceData(appData.UserId, appData.ApplicationDate)
-	if err != nil {
-		log.Printf("获取考勤数据失败: %v", err)
-		// 如果无法获取考勤数据，返回基础验证结果
-		return tv.createBasicValidationResult(appData), nil
-	}
-
-	// 2. 执行时间验证逻辑
-	result := tv.performTimeValidation(appData, attendanceData)
+	// 不再调用 OA 接口，直接基于申请数据进行基础校验
+	result := tv.createBasicValidationResult(appData)
 
 	log.Printf("时间验证完成 - IsValid: %v, IsWorkDay: %v, IsLate: %v, RiskLevel: %s",
 		result.IsValid, result.IsWorkDay, result.IsLate, result.RiskLevel)
@@ -44,49 +29,7 @@ func (tv *TimeValidator) ValidateApplicationTime(appData model.ApplicationData) 
 }
 
 // performTimeValidation 执行具体的时间验证逻辑
-func (tv *TimeValidator) performTimeValidation(appData model.ApplicationData, attendanceData *client.AttendanceData) *model.TimeValidationResult {
-	result := &model.TimeValidationResult{
-		IsValid:   true,
-		IsWorkDay: attendanceData.IsWorkDay,
-		IsLate:    false,
-		RiskLevel: "low",
-	}
-
-	// 检查是否为工作日
-	if !attendanceData.IsWorkDay {
-		result.IsValid = false
-		result.RiskLevel = "high"
-		result.Suggestion = "申请时间为非工作日，请确认申请类型"
-		result.Details = fmt.Sprintf("申请日期 %s 不是工作日", appData.ApplicationDate)
-		return result
-	}
-
-	// 检查申请类型
-	if appData.ApplicationType == "补打卡" {
-		// 补打卡申请需要检查是否会导致迟到
-		if tv.isLate(appData.ApplicationTime, attendanceData.WorkStartTime) {
-			result.IsLate = true
-			result.RiskLevel = "medium"
-			result.Suggestion = "申请时间可能导致迟到，请确认是否合理"
-			result.Details = fmt.Sprintf("申请时间 %s 晚于标准上班时间 %s",
-				appData.ApplicationTime, attendanceData.WorkStartTime)
-		} else {
-			result.Suggestion = "申请时间合理，符合补打卡要求"
-			result.Details = fmt.Sprintf("申请时间 %s 早于标准上班时间 %s",
-				appData.ApplicationTime, attendanceData.WorkStartTime)
-		}
-	} else if appData.ApplicationType == "病假" {
-		// 病假申请通常不需要时间验证
-		result.Suggestion = "病假申请，时间验证通过"
-		result.Details = "病假申请无需验证具体时间"
-	} else {
-		// 其他类型的申请
-		result.Suggestion = "申请时间验证通过"
-		result.Details = "申请时间符合要求"
-	}
-
-	return result
-}
+// 已不再依赖 OA 返回的字段，保留 isLate 等工具函数用于基础判断
 
 // isLate 判断申请时间是否会导致迟到
 func (tv *TimeValidator) isLate(applicationTime, standardTime string) bool {

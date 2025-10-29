@@ -12,7 +12,6 @@ import (
 	"mime/multipart"
 
 	_ "image/gif"
-	_ "image/jpeg"
 	_ "image/png"
 
 	// 移除对 golang.org/x/image 的依赖
@@ -119,7 +118,7 @@ func buildImageContentPart(fileHeader *multipart.FileHeader, imageURL string) (*
 }
 
 // (!! ---------------- 关键修改：简化的 Prompt ---------------- !!)
-func buildExtractorPrompt(appName string, appType string, appDate string, appStart string, appEnd string) string {
+func buildExtractorPrompt1(appName string, appType string, appDate string, appStart string, appEnd string) string {
 	var appTypeContext string
 	switch appType {
 	case "病假":
@@ -190,6 +189,57 @@ func buildExtractorPrompt(appName string, appType string, appDate string, appSta
 **JSON格式**：
 {"extracted_name":"","request_date":"","request_time":"","request_type":"","is_proof_type_valid":true/false,"content":"","is_company_internal":true/false,"is_chat_record":false,"time_from_content":"","candidate_times":[]}
 `, appNameContext, appType, appTypeContext, appDate, appTime, punchRule, nameExtractHint, year, appType)
+}
+
+// vision模型下准确率高，但是速度慢
+func buildExtractorPrompt(appName string, appType string, appDate string, appStart string, appEnd string) string {
+	// 规范化申请时间显示
+	appTime := displayAppTime(appStart, appEnd)
+	// 当前未接入外部OA，考勤数据占位
+	attendanceData := "N/A"
+
+	// 构建最终 Prompt（严格按用户提供的输入/输出规范）
+	return fmt.Sprintf(`
+你是一位专业的图像和信息分析专家，擅长处理考勤申请相关的分析工作。你的任务是根据提供的考勤申请图片以及相关员工考勤信息，对申请的有效性进行分析判断，并严格按指定JSON输出。
+
+输入：
+- 考勤申请图片：由系统在同一消息的 image_url 部分提供
+- 申请的类型：%s
+- 员工姓名：%s（若为空则不需校验）
+- 申请的日期：%s
+- 申请的时间：%s
+- 员工当天的考勤数据：%s
+
+分析判断要求：
+1. 若传入了员工姓名，需判断提取的姓名是否和申请人一致。
+2. 判断图片中提取到的最相关日期是否与 {{APPLICATION_DATE}} 一致。
+3. 判断图片时间是否有符合申请的时间点。
+4. 原则: 基于 {{APPLICATION_TYPE}}，判断该图片证据是否能从逻辑上强有力地支撑申请事由。分析指引:
+若为 "病假": 证据是否能证明申请人(员工)在申请日期确实因医疗原因无法工作？（例如：诊断证明、挂号单、药费单等）。
+若为 "补打卡" (含上下班): 证据是否能合理且可信地证明员工在工作或者在公司内？
+判断标准: AI应自主评估证据的可信度。无需局限于特定类型。
+有效证据示例:
+物理在司证明: 饭堂/内部消费小票, 门禁刷卡记录, 包含公司环境的带时间戳照片, 办公楼下快递签收记录等。
+数字在司证明: 电脑系统日志 (如 事件查看器 (Event Viewer), 开关机记录), 内部OA/ERP/Git/Jira等系统操作截图, VPN登录记录, 有上下文的(显示了工作内容)且带时间戳的工作聊天记录。
+AI 指引: AI应优先采信这些类别的证据，只要它们能清晰展示时间戳并与员工的工作相关联（如系统日志能证明电脑在运行），就应视为有效（true），而不是因其无法同时满足所有绑定条件（如“事件查看器”无法直接绑定“员工”）而拒绝。
+若为 "其他": 证据是否能支持申请人提出的具体事由？
+5. 提取图片中的关键字摘要（≤60字，不要重复时间）。
+6. 判断图片是否为聊天记录。
+7. 分析并给出符合 / 不符合的原因，需综合考虑图片内容、时间、考勤数据等多方面因素导致申请无效的情况。
+8. 给出AI的建议，即是否建议通过该申请。
+
+输出格式要求：严格输出以下JSON（不要多余解释）：
+{
+  "name_match": true/false,
+  "date_match": true/false,
+  "time_match": true/false,
+  "type_match": true/false,
+  "keywords": "",
+  "is_chat_record": true/false,
+  "reason": "",
+  "approve": true/false
+}
+`, appType, appName, appDate, appTime, attendanceData)
 }
 
 func displayAppTime(appStart, appEnd string) string {

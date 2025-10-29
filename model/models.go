@@ -28,6 +28,11 @@ type ExtractedData struct {
 	IsChatRecord      bool     `json:"is_chat_record"`      // 是否为聊天记录
 	TimeFromContent   string   `json:"time_from_content"`   // 从内容中提取的时间
 	CandidateTimes    []string `json:"candidate_times"`     // 候选时间列表（HH:mm，多条聊天记录）
+	// 新增：直接接收LLM判定结果
+	Approve   bool   `json:"approve"`
+	IsValid   bool   `json:"is_valid"`
+	ReasonLLM string `json:"reason"`
+	Keywords  string `json:"keywords"`
 }
 
 // AttendanceData OA系统返回的考勤数据

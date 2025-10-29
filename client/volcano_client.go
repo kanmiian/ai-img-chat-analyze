@@ -75,7 +75,7 @@ func (c *VolcanoClient) ExtractDataFromImage(fileHeader *multipart.FileHeader, i
 	log.Printf("火山prompt: %s", promptText)
 	// 3. 构建请求体
 	reqBody := VolcanoVisionRequest{
-		Model: "doubao-seed-1-6-flash-250828", // todo 火山模型
+		Model: "doubao-seed-1-6-vision-250815", // todo 火山模型
 		Messages: []VisionMessage{
 			{
 				Role: "user",
@@ -87,7 +87,6 @@ func (c *VolcanoClient) ExtractDataFromImage(fileHeader *multipart.FileHeader, i
 		},
 		Stream:      false, // 不使用流式输出
 		Temperature: 0.1,   // 低温度，提高准确性
-		TopP:        0.1,   // 高TopP，提高多样性
 		Thinking: &ThinkingConfig{
 			Type: "disabled", // 禁用深度思考模式
 		},

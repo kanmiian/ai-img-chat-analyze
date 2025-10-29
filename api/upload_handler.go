@@ -184,21 +184,30 @@ func (h *UploadHandler) TestVolcanoSimple(c *gin.Context) {
 		return
 	}
 
-	// 6. 返回详细结果（与OA系统期望的格式一致）
-	log.Printf("火山引擎测试完成 (总耗时: %v) - 结果: IsAbnormal=%v", totalDuration, result.IsAbnormal)
+	// 6. 构造与 /check-by 约定的返回映射
+	// data -> content（关键字摘要）
+	// is_abnormal -> approve（总体审批建议）
+	// message -> keywords（关键字摘要）
+	// reason -> message（总体说明）
+	var keywords string
+	if len(result.ImagesAnalysis) > 0 {
+		for _, d := range result.ImagesAnalysis {
+			if d.Success && d.ExtractedData != nil && d.ExtractedData.Content != "" {
+				keywords = d.ExtractedData.Content
+				break
+			}
+		}
+	}
+	approve := !result.IsAbnormal
+
+	log.Printf("火山引擎测试完成 (总耗时: %v) - Approve=%v", totalDuration, approve)
 
 	c.JSON(http.StatusOK, gin.H{
-		"success":     !result.IsAbnormal, // 通过 = 不异常
-		"message":     result.Reason,      // 原因
-		"is_abnormal": result.IsAbnormal,  // 直接返回，方便OA系统使用
-		"reason":      result.Reason,      // 失败原因
-		"data": gin.H{
-			"is_abnormal":        result.IsAbnormal,
-			"reason":             result.Reason,
-			"valid_image_index":  result.ValidImageIndex,
-			"total_images":       len(reqData.ImageUrls),
-			"processing_time_ms": totalDuration.Milliseconds(),
-		},
+		"success":     approve,
+		"message":     keywords,
+		"is_abnormal": approve,
+		"reason":      result.Reason,
+		"data":        keywords,
 	})
 }
 

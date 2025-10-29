@@ -29,8 +29,15 @@ func main() {
 		v1.POST("/check-by-volcano", uploadHandler.TestVolcanoSimple) // 火山引擎测试接口
 	}
 
-	log.Println("服务启动于 :8080")
-	if err := router.Run(":8080"); err != nil {
+	port := cfg.ServerPort
+	if port == "" {
+		port = "3000"
+	}
+	if port[0] != ':' {
+		port = ":" + port
+	}
+	log.Println("服务启动于", port)
+	if err := router.Run(port); err != nil {
 		log.Fatalf("启动服务失败: %v", err)
 	}
 }

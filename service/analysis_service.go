@@ -16,8 +16,6 @@ import (
 type AnalysisService struct {
 	qwenClient    *client.QwenClient    // 通义千问客户端
 	volcanoClient *client.VolcanoClient // 火山引擎客户端
-	oaClient      *client.OaClient      // OA 客户端
-	timeValidator *TimeValidator        // 时间验证器
 }
 
 // NewAnalysisService 注入所有客户端
@@ -250,13 +248,11 @@ func (s *AnalysisService) runAnalysis(appData model.ApplicationData, fileHeaders
 
 	totalDuration := time.Since(startTime)
 	log.Printf("规则引擎验证完成 (耗时: %v)", rulesDuration)
-	log.Printf("总分析时间: %v, 结果: IsAbnormal=%v, Reason=%s, 有效图片索引=%d",
-		totalDuration, result.IsAbnormal, result.Reason, validImageIndex)
+	log.Printf("总分析时间: %v, 结果: IsAbnormal=%v, Reason=%s",
+		totalDuration, result.IsAbnormal, result.Reason)
 
 	return result, nil
 }
 
 // GetEmployeeData 获取员工考勤数据
-func (s *AnalysisService) GetEmployeeData(userId string) (*client.EmployeeData, error) {
-	return s.oaClient.GetEmployeeData(userId)
-}
+// 已移除 OA 客户端相关逻辑，不再提供远程获取员工考勤数据的接口

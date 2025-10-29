@@ -61,6 +61,31 @@ func compareTimes(timeStr1, timeStr2 string) (bool, error) {
 }
 
 func ValidateApplication(appData model.ApplicationData, oaAttendance *model.OaAttendanceData, imageList []*model.ExtractedData) *model.AnalysisResult {
+	// LLM 裁决优先（多图规则：任意一张通过则整体通过；否则整体不通过）
+	var firstFailReason string
+	for _, d := range imageList {
+		if d == nil {
+			continue
+		}
+		if d.Approve || d.IsValid {
+			reason := d.ReasonLLM
+			if strings.TrimSpace(reason) == "" {
+				reason = "LLM判定：通过"
+			}
+			return &model.AnalysisResult{IsAbnormal: false, Reason: reason}
+		}
+		if firstFailReason == "" && (!d.Approve || !d.IsValid) {
+			r := d.ReasonLLM
+			if strings.TrimSpace(r) == "" {
+				r = "LLM判定：不通过"
+			}
+			firstFailReason = r
+		}
+	}
+	if firstFailReason != "" {
+		return &model.AnalysisResult{IsAbnormal: true, Reason: firstFailReason}
+	}
+
 	// 确定申请的时间范围
 	var startTime, endTime string
 	if appData.StartTime != "" || appData.EndTime != "" {
@@ -155,7 +180,7 @@ func ValidateApplication(appData model.ApplicationData, oaAttendance *model.OaAt
 		log.Printf("--- 正在验证图片 %d/%d ---", i+1, len(imageList))
 
 		currentValidation := struct{ NameOK, DateOK, TypeOK, TimeOK bool }{
-			NameOK: true, DateOK: false, TypeOK: false, TimeOK: true,
+			NameOK: true, DateOK: true, TypeOK: true, TimeOK: true,
 		}
 
 		// 规则 4.1: 姓名验证 (逻辑不变)
@@ -176,51 +201,12 @@ func ValidateApplication(appData model.ApplicationData, oaAttendance *model.OaAt
 			log.Println("非病假申请，跳过姓名强制验证")
 		}
 
-		// 规则 4.2: 日期验证 (逻辑不变)
-		if imageData.RequestDate == "未知" {
-			currentImageFailures = append(currentImageFailures, "证明材料未识别到日期")
-		} else if appData.ApplicationDate != imageData.RequestDate {
-			currentImageFailures = append(currentImageFailures, fmt.Sprintf("证明材料日期[%s]与申请日期[%s]不符", imageData.RequestDate, appData.ApplicationDate))
-		} else {
-			currentValidation.DateOK = true
-			log.Printf("日期验证通过: 申请日期[%s] = 图片日期[%s]", appData.ApplicationDate, imageData.RequestDate)
-		}
+		// 规则 4.2: 日期验证（已按需求临时跳过）
+		// 保留占位，不进行拦截和失败累积
 
-		// 规则 4.3: 类型验证
-		if !imageData.IsProofTypeValid {
-			rt := imageData.RequestType
-			if rt == "" || rt == "未知" {
-				rt = "无法识别的类型"
-			}
+		// 规则 4.3: 类型验证（已按需求临时跳过）
+		// 保留占位，不进行拦截和失败累积
 
-			// 补打卡兜底纠偏：饭堂/消费/账单类直接视为有效
-			if appData.ApplicationType == "补打卡" {
-				lower := strings.ToLower(rt)
-				if strings.Contains(lower, "账单") || strings.Contains(lower, "消费") || strings.Contains(lower, "饭堂") || strings.Contains(lower, "食堂") || strings.Contains(lower, "小票") || strings.Contains(lower, "收银") || strings.Contains(lower, "票据") || strings.Contains(lower, "订单") || strings.Contains(lower, "支付") || strings.Contains(lower, "交易") || strings.Contains(lower, "就餐") || strings.Contains(lower, "餐饮") || strings.Contains(lower, "餐费") || strings.Contains(lower, "餐卡") {
-					currentValidation.TypeOK = true
-					log.Printf("类型纠偏：[%s] 视为补打卡有效证据", rt)
-					goto SKIP_TYPE_FAILURE
-				}
-			}
-
-			var reason string
-			if appData.ApplicationType == "补打卡" && rt == "聊天记录" {
-				// 对于聊天记录，先记录类型验证失败，等时间验证完成后再决定最终提示语
-				reason = "补打卡证明需提供有力清晰的在司真实证明，如 ①饭堂消费记录； ②电脑开机时间；③网页浏览或文件处理记录，当前是【聊天记录】"
-			} else {
-				reason = fmt.Sprintf("证据类型无效：检测为[%s]，与申请类型[%s]不匹配", rt, appData.ApplicationType)
-			}
-			currentImageFailures = append(currentImageFailures, reason)
-		} else {
-			currentValidation.TypeOK = true
-			log.Printf("AI 判定：证据类型[%s]有效", imageData.RequestType)
-			// 聊天记录特殊提示
-			if appData.ApplicationType == "补打卡" && imageData.RequestType == "聊天记录" {
-				log.Printf("图片类型: 聊天记录 (仍进行时间校验)")
-			}
-		}
-
-	SKIP_TYPE_FAILURE:
 		// --- 裁决当前图片 ---
 		if len(currentImageFailures) == 0 && currentValidation.NameOK && currentValidation.DateOK && currentValidation.TypeOK && currentValidation.TimeOK {
 			passedImageIndex = i + 1

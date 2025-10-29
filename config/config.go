@@ -7,6 +7,7 @@ import (
 
 // Config 结构体存储所有配置
 type Config struct {
+	ServerPort    string // HTTP 服务端口，如 "3000" 或 ":3000"
 	OcrServiceURL string // PaddleOCR 服务的地址
 	VolcanoApiKey string // 火山 API Key
 	VolcanoApiURL string // 火山 API Endpoint
@@ -17,6 +18,7 @@ type Config struct {
 // LoadConfig 从环境变量加载配置
 func LoadConfig() *Config {
 	cfg := &Config{
+		ServerPort: getEnv("PORT", "3000"),
 		// OcrServiceURL: getEnv("OCR_SERVICE_URL", "http://paddleocr-service:8888/ocr"),
 		VolcanoApiKey: getEnv("VOLCANO_API_KEY", ""),
 		VolcanoApiURL: getEnv("VOLCANO_API_URL", ""),
