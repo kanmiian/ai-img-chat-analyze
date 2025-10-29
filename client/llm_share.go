@@ -11,7 +11,6 @@ import (
 	"log"
 	"mime/multipart"
 
-	// (解码器保持不变)
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
