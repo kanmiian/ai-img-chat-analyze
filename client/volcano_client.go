@@ -183,3 +183,136 @@ func (c *VolcanoClient) ExtractDataFromImage(fileHeader *multipart.FileHeader, i
 
 	return &extractedData, requestId, tokenUsage, nil
 }
+
+// CheckByNoImage 基于申请参数和考勤信息进行文本分析（无需图片）
+// 返回：分析结果、请求ID、Token使用情况、错误
+func (c *VolcanoClient) CheckByNoImage(appType string, appName string, appDate string, appStart string, appEnd string, attendanceInfo []string) (map[string]interface{}, string, *model.TokenUsage, error) {
+	startTime := time.Now()
+	log.Printf("Volcano开始文本分析 - 申请类型: %s, 员工: %s, 日期: %s", appType, appName, appDate)
+
+	// 1. 构建文本prompt
+	promptText := buildCheckByNoImagePrompt(appType, appName, appDate, appStart, appEnd, attendanceInfo)
+	log.Printf("火山文本prompt: %s", promptText)
+
+	// 2. 构建请求体（纯文本，无图片）
+	reqBody := VolcanoVisionRequest{
+		Model: "doubao-seed-1-6-vision-250815", // 使用相同的模型
+		Messages: []VisionMessage{
+			{
+				Role: "user",
+				Content: []ContentPart{
+					{Type: "text", Text: promptText},
+				},
+			},
+		},
+		Stream:      false,
+		Temperature: 0.1,
+		Thinking: &ThinkingConfig{
+			Type: "disabled",
+		},
+	}
+
+	reqBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, "", nil, fmt.Errorf("构建火山文本请求体失败: %w", err)
+	}
+
+	// 3. 创建 HTTP 请求
+	req, err := http.NewRequest("POST", c.url, bytes.NewBuffer(reqBytes))
+	if err != nil {
+		return nil, "", nil, fmt.Errorf("创建火山文本 HTTP 请求失败: %w", err)
+	}
+
+	// 4. 设置请求头
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+
+	// 5. 发送请求
+	httpStartTime := time.Now()
+	log.Printf("发送Volcano文本HTTP请求 - URL: %s, 请求体大小: %d bytes", c.url, len(reqBytes))
+	resp, err := c.httpClient.Do(req)
+	httpDuration := time.Since(httpStartTime)
+	if err != nil {
+		log.Printf("Volcano文本HTTP请求失败 (耗时: %v): %v", httpDuration, err)
+		return nil, "", nil, fmt.Errorf("发送火山文本 HTTP 请求失败: %w", err)
+	}
+	defer resp.Body.Close()
+	log.Printf("Volcano文本HTTP请求完成 (耗时: %v, 状态码: %d)", httpDuration, resp.StatusCode)
+
+	// 6. 读取响应
+	readStartTime := time.Now()
+	respBody, err := io.ReadAll(resp.Body)
+	readDuration := time.Since(readStartTime)
+	if err != nil {
+		log.Printf("读取Volcano文本响应失败 (耗时: %v): %v", readDuration, err)
+		return nil, "", nil, fmt.Errorf("读取火山文本响应体失败: %w", err)
+	}
+	log.Printf("读取Volcano文本响应完成 (耗时: %v, 响应大小: %d bytes)", readDuration, len(respBody))
+
+	if resp.StatusCode != http.StatusOK {
+		log.Printf("火山文本 API 请求失败，状态码: %d, 请求体: %s", resp.StatusCode, string(reqBytes))
+		return nil, "", nil, fmt.Errorf("火山文本 API 请求失败，状态码: %d, 响应: %s", resp.StatusCode, string(respBody))
+	}
+
+	// 7. 解析响应
+	var llmResp LlmResponse
+	if err := json.Unmarshal(respBody, &llmResp); err != nil {
+		return nil, "", nil, fmt.Errorf("解析火山文本响应失败: %w, 响应: %s", err, string(respBody))
+	}
+	log.Printf("火山文本响应: %s", string(respBody))
+
+	// 8. 提取requestId和tokenUsage
+	requestId := llmResp.Id
+	var tokenUsage *model.TokenUsage
+	if llmResp.Usage != nil {
+		tokenUsage = &model.TokenUsage{
+			CompletionTokens: llmResp.Usage.CompletionTokens,
+			PromptTokens:     llmResp.Usage.PromptTokens,
+			TotalTokens:      llmResp.Usage.TotalTokens,
+		}
+		log.Printf("Volcano文本请求ID: %s, Token使用: prompt=%d, completion=%d, total=%d",
+			requestId, tokenUsage.PromptTokens, tokenUsage.CompletionTokens, tokenUsage.TotalTokens)
+	} else {
+		log.Printf("Volcano文本请求ID: %s (未返回token使用信息)", requestId)
+	}
+
+	if llmResp.Error.Code != "" {
+		return nil, requestId, tokenUsage, fmt.Errorf("火山文本 API 错误: %s", llmResp.Error.Message)
+	}
+
+	if len(llmResp.Choices) == 0 || llmResp.Choices[0].Message.Content == "" {
+		return nil, requestId, tokenUsage, fmt.Errorf("火山文本 API 响应中没有找到有效内容, 响应: %s", string(respBody))
+	}
+
+	// 9. 解析AI返回的JSON
+	aiContent := llmResp.Choices[0].Message.Content
+	aiContent = strings.TrimPrefix(aiContent, "```json")
+	aiContent = strings.TrimSuffix(aiContent, "```")
+	aiContent = strings.TrimSpace(aiContent)
+
+	parseStartTime := time.Now()
+	var result map[string]interface{}
+	if err := json.Unmarshal([]byte(aiContent), &result); err != nil {
+		log.Printf("解析AI返回JSON失败 (耗时: %v): %v, 内容: %s", time.Since(parseStartTime), err, aiContent)
+		return nil, requestId, tokenUsage, fmt.Errorf("解析 AI 返回的 JSON 内容失败: %w, AI内容: %s", err, aiContent)
+	}
+	parseDuration := time.Since(parseStartTime)
+
+	totalDuration := time.Since(startTime)
+	log.Printf("Volcano文本处理完成 - RequestId: %s, 总耗时: %v (HTTP: %v, 读取: %v, 解析: %v)",
+		requestId, totalDuration, httpDuration, readDuration, parseDuration)
+
+	return result, requestId, tokenUsage, nil
+}
+
+// CheckByWithImageAuth 根据need_image_auth参数决定是否进行图片校验
+// need_image_auth为true时调用ExtractDataFromImage，为false时调用CheckByNoImage
+func (c *VolcanoClient) CheckByWithImageAuth(needImageAuth bool, fileHeader *multipart.FileHeader, imageURL string, appType string, appName string, appDate string, appStart string, appEnd string, attendanceInfo []string) (interface{}, string, *model.TokenUsage, error) {
+	if needImageAuth {
+		// 需要图片校验，调用原有的图片分析方法
+		return c.ExtractDataFromImage(fileHeader, imageURL, appName, appType, appDate, appStart, appEnd)
+	} else {
+		// 不需要图片校验，调用文本分析方法
+		return c.CheckByNoImage(appType, appName, appDate, appStart, appEnd, attendanceInfo)
+	}
+}

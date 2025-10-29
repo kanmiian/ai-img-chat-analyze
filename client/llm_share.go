@@ -254,3 +254,47 @@ func displayAppTime(appStart, appEnd string) string {
 		return "未提供"
 	}
 }
+
+// 针对不需要图片校验的场景，基于申请参数与考勤信息进行规则性评估的 Prompt
+func buildCheckByNoImagePrompt(appType string, appName string, appDate string, appStart string, appEnd string, attendanceInfo []string) string {
+	appTime := displayAppTime(appStart, appEnd)
+	var attendanceText string
+	if len(attendanceInfo) == 0 {
+		attendanceText = "无"
+	} else {
+		attendanceText = fmt.Sprintf("%v", attendanceInfo)
+	}
+
+	return fmt.Sprintf(`
+你是HR考勤与审批助手。在无需图片核验的前提下，仅依据申请参数与当日考勤数据，判断当日属性并评估申请合理性。严格返回指定JSON，不要多余解释。
+
+输入：
+- 申请类型：%s
+- 员工姓名：%s（若为空可忽略姓名一致性）
+- 申请日期：%s
+- 申请时间：%s
+- 当日考勤时间点（HH:mm 列表，上下班/打卡记录）：%s
+
+要求：
+1) 先判断该日期是工作日还是节假日：
+   - 如无法联网获取法定节假日，按周一~周五视为“工作日”，周六/周日视为“节假日”，并在 reason 中注明依据。
+2) 基于当日属性与“申请类型”评估“是否合理”：
+   - 请假类（事假/病假/年假/调休等）→ 工作日更合理；
+   - 节假日加班/加班调休 → 节假日更合理；
+   - 补打卡 → 根据考勤时间点是否与申请时间段存在合理对应；
+3) 若存在当日考勤数据：
+   - 如已存在完整上下班记录但申请“请假”（全天）→ 判为“矛盾”；
+   - 如无任何打卡但申请“补打卡”（仅特定时间点）→ 判定是否存在可解释的合理性；
+   - 无考勤数据则标记为“无数据”。
+
+输出：严格返回以下JSON（不要包裹markdown或注释）：
+{
+  "is_work_day": true/false,
+  "day_type": "工作日/节假日",
+  "application_reasonable": true/false,
+  "attendance_consistency": "一致/矛盾/无数据",
+  "reason": "",
+  "suggestion": ""
+}
+`, appType, appName, appDate, appTime, attendanceText)
+}
