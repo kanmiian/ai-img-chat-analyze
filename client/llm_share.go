@@ -191,7 +191,6 @@ func buildExtractorPrompt1(appName string, appType string, appDate string, appSt
 `, appNameContext, appType, appTypeContext, appDate, appTime, punchRule, nameExtractHint, year, appType)
 }
 
-// vision模型下准确率高，但是速度慢
 func buildExtractorPrompt(appName string, appType string, appDate string, appStart string, appEnd string) string {
 	// 规范化申请时间显示
 	appTime := displayAppTime(appStart, appEnd)
@@ -240,6 +239,101 @@ AI 指引: AI应优先采信这些类别的证据，只要它们能清晰展示�
   "approve": true/false
 }
 `, appType, appName, appDate, appTime, attendanceData)
+}
+
+// 修改prompt，根据类型简述要求
+func buildPromptByType(employeeName string, appType string, applicationDate string, applicationTime string) string {
+	// 引用参数以避免未使用编译错误（本模板使用占位符由上层替换/理解）
+	_ = employeeName
+	_ = appType
+	_ = applicationDate
+	_ = applicationTime
+	return `你是一位专业的审核AI，负责根据提供的证明图片和相关信息，判断是否符合补打卡或病假的要求。
+
+## 输入:
+- 证明图片: {{IMAGE_PROOF}}
+- 日期: {{APPLICATION_DATE}}
+- 时间: {{APPLICATION_TIME}}
+- 类型: {{APPLICATION_TYPE}}（补打卡/病假）
+- 员工姓名: {{EMPLOYEE_NAME}}
+
+## 判断标准:
+请严格基于申请日期与时间进行比对。如图片中存在多个日期或时间，请优先选择最接近申请日期和时间的一个作为参考。
+**禁止使用模糊匹配或近似判断。所有时间比较均需严格按数值计算。**
+### 补打卡类型
+1. 日期和时间匹配
+   - 上班补打卡: 图片中时间必须 ≤ {{APPLICATION_TIME}} 才算匹配；  
+   - 下班补打卡: 图片中时间必须 ≥ {{APPLICATION_TIME}} 才算匹配；  
+   - 若最接近的图片时间不满足条件，则 time_match = false。  
+   - 图片必须体现 {{APPLICATION_DATE}}，否则 date_match = false。
+2. 图片类型有效
+    - 有效的图片类型包括饭卡/食堂的消费记录，工位环境（电脑办公软件显示了时间）、电脑浏览器记录、系统事件截图等。
+
+### 病假类型
+1. 图片有效
+    - 图片需为病历单、处方单、诊断证明等能证明在医院就医的材料。
+    - 图片中能识别出 {{EMPLOYEE_NAME}} 是患者/看诊人，且日期符合 {{APPLICATION_DATE}}。
+
+## 输出格式要求:
+请严格输出以下 JSON，不得添加任何解释、推理、过程描述或额外内容：
+{
+    "date_match": true/false,
+    "time_match": true/false,
+    "keywords": "",
+    "is_chat_record": false,
+    "reason": "",
+    "approve": true/false,
+    "confidence": ""
+}
+
+### 字段说明:
+- date_match: 日期是否匹配。
+- time_match: 时间是否匹配（补打卡类型有效，病假类型始终为 false）。
+- keywords: 识别到的关键信息（如图片中的日期、时间、员工姓名等）。
+- is_chat_record: 是否为聊天记录（针对补打卡的判断）。
+- reason: 只写最终结论，不写思考过程，不超过 60 字，例如：
+  - 示例："时间不符，图片无相关记录。"
+- approve: AI是否建议通过。
+- confidence: AI建议的置信度（百分比）。
+
+请根据提供的 {{IMAGE_PROOF}}、{{APPLICATION_DATE}}、{{APPLICATION_TIME}}、{{APPLICATION_TYPE}} 和 {{EMPLOYEE_NAME}} 开始判断。`
+}
+
+// 构建无需图片核验的Prompt
+func buildNoImagePrompt(appName string, appType string, appDate string, appTime string, attendanceText string) string {
+	return fmt.Sprintf(`
+你是HR考勤与审批助手。在无需图片核验的前提下，仅依据申请参数与当日考勤数据，判断当日属性并评估申请合理性。严格返回指定JSON，不要多余解释。
+
+输入：
+- 申请类型：%s
+- 员工姓名：%s（若为空可忽略姓名一致性）
+- 申请日期：%s
+- 申请时间：%s
+- 当日考勤时间点（HH:mm 列表，上下班/打卡记录）：%s
+
+要求：
+1) 先判断该日期是工作日还是节假日：
+   - 如无法联网获取法定节假日，按周一~周五视为“工作日”，周六/周日视为“节假日”，并在 reason 中注明依据。
+2) 基于当日属性与“申请类型”评估“是否合理”：
+   - 请假类（事假/病假/年假/调休等）→ 工作日更合理；
+   - 节假日加班/加班调休 → 节假日更合理；
+   - 补打卡 → 根据考勤时间点是否与申请时间段存在合理对应；
+3) 若存在当日考勤数据：
+   - 如已存在完整上下班记录但申请“请假”（全天）→ 判为“矛盾”；
+   - 如无任何打卡但申请“补打卡”（仅特定时间点）→ 判定是否存在可解释的合理性；
+   - 无考勤数据则标记为“无数据”。
+
+输出：严格返回以下JSON（不要包裹markdown或注释）：
+{
+  "is_work_day": true/false,
+  "day_type": "工作日/节假日",
+  "application_reasonable": true/false,
+  "attendance_consistency": "一致/矛盾/无数据",
+  "approve": true/false,  // AI是否建议通过
+  "reason": "",
+  "suggestion": ""
+}
+`, appType, appName, appDate, appTime, attendanceText)
 }
 
 func displayAppTime(appStart, appEnd string) string {

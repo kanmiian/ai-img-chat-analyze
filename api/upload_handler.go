@@ -88,17 +88,18 @@ func (h *UploadHandler) TestVolcanoSimple(c *gin.Context) {
 
 	// 1. 解析请求参数（支持JSON和表单两种格式）
 	var reqData struct {
-		UserId          string   `json:"user_id" form:"user_id"`
-		Alias           string   `json:"alias" form:"alias"`
-		ApplicationType string   `json:"application_type" form:"application_type" binding:"required"`
-		ApplicationTime string   `json:"application_time" form:"application_time"` // 向后兼容
-		StartTime       string   `json:"start_time" form:"start_time"`             // 上班时间
-		EndTime         string   `json:"end_time" form:"end_time"`                 // 下班时间
-		ApplicationDate string   `json:"application_date" form:"application_date"`
-		Reason          string   `json:"reason" form:"reason"`
-		ImageUrls       []string `json:"image_urls" form:"image_urls[]"`
-		ImageBase64     string   `json:"image_base64" form:"image_base64"` // 新增：base64图片
-		AttendanceInfo  []string `json:"attendance_info" form:"attendance_info[]"`
+		UserId              string   `json:"user_id" form:"user_id"`
+		Alias               string   `json:"alias" form:"alias"`
+		ApplicationType     string   `json:"application_type" form:"application_type" binding:"required"`
+		ApplicationTime     string   `json:"application_time" form:"application_time"` // 向后兼容
+		StartTime           string   `json:"start_time" form:"start_time"`             // 上班时间
+		EndTime             string   `json:"end_time" form:"end_time"`                 // 下班时间
+		ApplicationDate     string   `json:"application_date" form:"application_date"`
+		Reason              string   `json:"reason" form:"reason"`
+		ImageUrls           []string `json:"image_urls" form:"image_urls[]"`
+		ImageBase64         string   `json:"image_base64" form:"image_base64"` // 新增：base64图片
+		AttendanceInfo      []string `json:"attendance_info" form:"attendance_info[]"`
+		NeedImageValidation *bool    `json:"need_image_validation" form:"need_image_validation"`
 	}
 
 	// 尝试JSON绑定，失败则尝试表单绑定
@@ -118,13 +119,13 @@ func (h *UploadHandler) TestVolcanoSimple(c *gin.Context) {
 		log.Printf("使用JSON格式解析成功")
 	}
 
-	// 添加调试日志查看接收到的参数
-	log.Printf("接收到的参数 - UserId: '%s', Alias: '%s', ApplicationType: '%s', StartTime: '%s', EndTime: '%s', ApplicationTime: '%s', ImageUrls长度: %d, ImageUrls内容: %v, ImageBase64长度: %d",
-		reqData.UserId, reqData.Alias, reqData.ApplicationType, reqData.StartTime, reqData.EndTime, reqData.ApplicationTime, len(reqData.ImageUrls), reqData.ImageUrls, len(reqData.ImageBase64))
-
-	// 2. 检查是否有图片（支持URL和base64两种方式）
-	if len(reqData.ImageUrls) == 0 && reqData.ImageBase64 == "" {
-		log.Printf("测试请求缺少图片（既无image_urls也无image_base64）")
+	// 2. 检查是否需要图片（当 need_image_validation 为 true 或未提供时才要求图片）
+	needImageValidation := true
+	if reqData.NeedImageValidation != nil {
+		needImageValidation = *reqData.NeedImageValidation
+	}
+	if needImageValidation && len(reqData.ImageUrls) == 0 && reqData.ImageBase64 == "" {
+		log.Printf("测试请求缺少图片（既无image_urls也无image_base64），且需要图片核验")
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
 			"message": "必须提供至少一张图片（image_urls或image_base64）",
@@ -145,6 +146,8 @@ func (h *UploadHandler) TestVolcanoSimple(c *gin.Context) {
 		ImageUrls:       reqData.ImageUrls,
 		AttendanceInfo:  reqData.AttendanceInfo,
 	}
+	// 3.1 传递 need_image_validation
+	appData.NeedImageValidation = reqData.NeedImageValidation
 
 	// 如果有base64图片，将其转换为URL格式添加到ImageUrls中
 	if reqData.ImageBase64 != "" {
@@ -200,7 +203,7 @@ func (h *UploadHandler) TestVolcanoSimple(c *gin.Context) {
 	}
 	approve := !result.IsAbnormal
 
-	log.Printf("火山引擎测试完成 (总耗时: %v) - Approve=%v", totalDuration, approve)
+	log.Printf("火山引擎测试完成 (总耗时: %v) - Approve=%v, result=%+v", totalDuration, approve, result)
 
 	c.JSON(http.StatusOK, gin.H{
 		"success":     approve,

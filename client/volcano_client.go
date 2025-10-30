@@ -13,6 +13,40 @@ import (
 	"time"
 )
 
+// 提取最后一个完整的 JSON 对象字符串
+func extractLastJSONObject(s string) string {
+	s = strings.TrimSpace(s)
+	// 快速路径：若本身就是以 { 开头并以 } 结尾，直接返回
+	if strings.HasPrefix(s, "{") && strings.HasSuffix(s, "}") {
+		return s
+	}
+	// 去掉可能的围栏
+	s = strings.TrimPrefix(s, "```json")
+	s = strings.TrimPrefix(s, "```")
+	s = strings.TrimSuffix(s, "```")
+	// 扫描并收集所有平衡的 JSON 对象，取最后一个
+	var last string
+	depth := 0
+	start := -1
+	for i, r := range s {
+		if r == '{' {
+			if depth == 0 {
+				start = i
+			}
+			depth++
+		} else if r == '}' {
+			if depth > 0 {
+				depth--
+				if depth == 0 && start >= 0 {
+					last = s[start : i+1]
+					start = -1
+				}
+			}
+		}
+	}
+	return strings.TrimSpace(last)
+}
+
 // VolcanoClient 结构体
 type VolcanoClient struct {
 	url        string
@@ -36,6 +70,16 @@ type ThinkingConfig struct {
 	Type string `json:"type"` // "enabled" 或 "disabled"
 }
 
+// 为了在需要时安全地附加图片内容，这里提供一个别名和安全复制方法
+type VisionMessageContentPartAlias ContentPart
+
+func (cp *ContentPart) CopyOrZero() ContentPart {
+	if cp == nil {
+		return ContentPart{Type: "text", Text: ""}
+	}
+	return *cp
+}
+
 // NewVolcanoClient 创建火山客户端
 func NewVolcanoClient(url string, apiKey string) *VolcanoClient {
 	return &VolcanoClient{
@@ -48,7 +92,7 @@ func NewVolcanoClient(url string, apiKey string) *VolcanoClient {
 // ExtractDataFromImage 调用火山 API 提取图片数据
 // 支持 fileHeader（直接上传）或 imageURL（URL直传）
 // 返回：提取的数据、请求ID、Token使用情况、错误
-func (c *VolcanoClient) ExtractDataFromImage(fileHeader *multipart.FileHeader, imageURL string, officialName string, appType string, applicationDate string, appStart string, appEnd string) (*model.ExtractedData, string, *model.TokenUsage, error) {
+func (c *VolcanoClient) ExtractDataFromImage(fileHeader *multipart.FileHeader, imageURL string, officialName string, appType string, applicationDate string, appStart string, appEnd string, needImageValidation bool, attendanceText string) (*model.ExtractedData, string, *model.TokenUsage, error) {
 	startTime := time.Now()
 
 	// 记录输入来源
@@ -60,36 +104,57 @@ func (c *VolcanoClient) ExtractDataFromImage(fileHeader *multipart.FileHeader, i
 			imageURL, officialName, appType)
 	}
 
-	// 1. 构建图片内容（base64 或 URL）
-	imageStartTime := time.Now()
-	imageContent, err := buildImageContentPart(fileHeader, imageURL)
-	imageDuration := time.Since(imageStartTime)
-	if err != nil {
-		log.Printf("图片处理失败 (耗时: %v): %v", imageDuration, err)
-		return nil, "", nil, fmt.Errorf("图片处理失败: %w", err)
+	// 1. 构建图片内容（base64 或 URL），当需要图片核验时
+	var imageContent *VisionMessageContentPartAlias
+	var imageDuration time.Duration
+	var err error
+	if needImageValidation {
+		imageStartTime := time.Now()
+		var ic *ContentPart
+		ic, err = buildImageContentPart(fileHeader, imageURL)
+		imageDuration = time.Since(imageStartTime)
+		if err != nil {
+			log.Printf("图片处理失败 (耗时: %v): %v", imageDuration, err)
+			return nil, "", nil, fmt.Errorf("图片处理失败: %w", err)
+		}
+		log.Printf("图片内容构建完成 (耗时: %v)", imageDuration)
+		// 为了统一类型，使用别名承接后续组装
+		imageContent = (*VisionMessageContentPartAlias)(ic)
 	}
-	log.Printf("图片内容构建完成 (耗时: %v)", imageDuration)
 
-	// 2. 构建prompt
-	promptText := buildExtractorPrompt(officialName, appType, applicationDate, appStart, appEnd)
+	// 2. 构建prompt（区分是否需要图片核验）
+	var promptText string
+	if needImageValidation {
+		promptText = buildPromptByType(officialName, appType, applicationDate, displayAppTime(appStart, appEnd))
+		if ic := (*ContentPart)(imageContent); ic != nil && ic.ImageURL != nil {
+			proof := ic.ImageURL.URL
+			promptText = strings.ReplaceAll(promptText, "{{IMAGE_PROOF}}", proof)
+		}
+		promptText = strings.ReplaceAll(promptText, "{{APPLICATION_DATE}}", applicationDate)
+		promptText = strings.ReplaceAll(promptText, "{{APPLICATION_TIME}}", displayAppTime(appStart, appEnd))
+		promptText = strings.ReplaceAll(promptText, "{{APPLICATION_TYPE}}", appType)
+		promptText = strings.ReplaceAll(promptText, "{{EMPLOYEE_NAME}}", officialName)
+	} else {
+		promptText = buildNoImagePrompt(officialName, appType, applicationDate, displayAppTime(appStart, appEnd), attendanceText)
+	}
 	log.Printf("火山prompt: %s", promptText)
 	// 3. 构建请求体
+	var messages []VisionMessage
+	if needImageValidation {
+		messages = []VisionMessage{
+			{Role: "user", Content: []ContentPart{{Type: "text", Text: promptText}, (*ContentPart)(imageContent).CopyOrZero()}},
+		}
+	} else {
+		messages = []VisionMessage{
+			{Role: "user", Content: []ContentPart{{Type: "text", Text: promptText}}},
+		}
+	}
 	reqBody := VolcanoVisionRequest{
-		Model: "doubao-seed-1-6-vision-250815", // todo 火山模型
-		Messages: []VisionMessage{
-			{
-				Role: "user",
-				Content: []ContentPart{
-					{Type: "text", Text: promptText},
-					*imageContent, // 使用构建的图片内容
-				},
-			},
-		},
-		Stream:      false, // 不使用流式输出
-		Temperature: 0.1,   // 低温度，提高准确性
-		Thinking: &ThinkingConfig{
-			Type: "disabled", // 禁用深度思考模式
-		},
+		Model:       "doubao-seed-1-6-lite-251015",
+		Messages:    messages,
+		Stream:      false,
+		Temperature: 0.1,
+		Thinking:    &ThinkingConfig{Type: "disabled"},
 	}
 
 	reqBytes, err := json.Marshal(reqBody)
@@ -168,14 +233,39 @@ func (c *VolcanoClient) ExtractDataFromImage(fileHeader *multipart.FileHeader, i
 	aiContent = strings.TrimSuffix(aiContent, "```")
 	aiContent = strings.TrimSpace(aiContent)
 
+	// 仅提取并解析最后一个 JSON 对象，确保只返回一组结果
+	jsonToParse := extractLastJSONObject(aiContent)
+	if jsonToParse == "" {
+		return nil, requestId, tokenUsage, fmt.Errorf("未找到有效的 JSON 对象, AI内容: %s", aiContent)
+	}
+
 	// 10. 将 AI 返回的 JSON 字符串解析为 ExtractedData
 	parseStartTime := time.Now()
 	var extractedData model.ExtractedData
-	if err := json.Unmarshal([]byte(aiContent), &extractedData); err != nil {
-		log.Printf("解析AI返回JSON失败 (耗时: %v): %v, 内容: %s", time.Since(parseStartTime), err, aiContent)
-		return nil, requestId, tokenUsage, fmt.Errorf("解析 AI 返回的 JSON 内容失败: %w, AI内容: %s", err, aiContent)
+	if err := json.Unmarshal([]byte(jsonToParse), &extractedData); err != nil {
+		log.Printf("解析AI返回JSON失败 (耗时: %v): %v, 内容: %s", time.Since(parseStartTime), err, jsonToParse)
+		return nil, requestId, tokenUsage, fmt.Errorf("解析 AI 返回的 JSON 内容失败: %w, JSON: %s", err, jsonToParse)
 	}
 	parseDuration := time.Since(parseStartTime)
+
+	// 额外字段映射与兜底：打卡类型等
+	if extractedData.RequestType == "" {
+		extractedData.RequestType = appType
+	}
+	if extractedData.RequestDate == "" {
+		extractedData.RequestDate = applicationDate
+	}
+	if extractedData.RequestTime == "" {
+		extractedData.RequestTime = displayAppTime(appStart, appEnd)
+	}
+	if extractedData.ExtractedName == "" {
+		extractedData.ExtractedName = officialName
+	}
+	// 同步有效性判定
+	if extractedData.Approve {
+		extractedData.IsValid = true
+		extractedData.IsProofTypeValid = true
+	}
 
 	totalDuration := time.Since(startTime)
 	log.Printf("Volcano处理完成 - RequestId: %s, 总耗时: %v (图片处理: %v, HTTP: %v, 读取: %v, 解析: %v)",

@@ -2,17 +2,18 @@ package model
 
 // ApplicationData OA 系统提交的表单数据
 type ApplicationData struct {
-	UserId          string   `form:"user_id"`                                  // 员工 ID
-	Alias           string   `form:"alias"`                                    // 员工姓名
-	ApplicationType string   `form:"application_type"`                         // 申请类型 (e.g., "补打卡", "病假")
-	ApplicationTime string   `form:"application_time"`                         // 申请的时间 (e.g., "09:00") - 向后兼容
-	StartTime       string   `form:"start_time"`                               // 上班时间 (e.g., "09:00")
-	EndTime         string   `form:"end_time"`                                 // 下班时间 (e.g., "18:00")
-	ApplicationDate string   `form:"application_date"`                         // 申请的日期 (e.g., "2025-10-21")
-	Reason          string   `form:"reason"`                                   // 申请理由 (文字)
-	ImageUrl        string   `form:"image_url"`                                // 图片 URL（单个，向后兼容）
-	ImageUrls       []string `form:"image_urls[]"`                             // 图片 URLs（多个）
-	AttendanceInfo  []string `json:"attendance_info" form:"attendance_info[]"` // 当天已有打卡时间数组 (HH:mm 列表)
+	UserId              string   `form:"user_id"`                                            // 员工 ID
+	Alias               string   `form:"alias"`                                              // 员工姓名
+	ApplicationType     string   `form:"application_type"`                                   // 申请类型 (e.g., "补打卡", "病假")
+	ApplicationTime     string   `form:"application_time"`                                   // 申请的时间 (e.g., "09:00") - 向后兼容
+	StartTime           string   `form:"start_time"`                                         // 上班时间 (e.g., "09:00")
+	EndTime             string   `form:"end_time"`                                           // 下班时间 (e.g., "18:00")
+	ApplicationDate     string   `form:"application_date"`                                   // 申请的日期 (e.g., "2025-10-21")
+	Reason              string   `form:"reason"`                                             // 申请理由 (文字)
+	ImageUrl            string   `form:"image_url"`                                          // 图片 URL（单个，向后兼容）
+	ImageUrls           []string `form:"image_urls[]"`                                       // 图片 URLs（多个）
+	AttendanceInfo      []string `json:"attendance_info" form:"attendance_info[]"`           // 当天已有打卡时间数组 (HH:mm 列表)
+	NeedImageValidation *bool    `form:"need_image_validation" json:"need_image_validation"` // 是否需要图片校验（默认true；nil表示未提供）
 }
 
 // ExtractedData 是从(图片)中提取的结构化数据
@@ -33,6 +34,9 @@ type ExtractedData struct {
 	IsValid   bool   `json:"is_valid"`
 	ReasonLLM string `json:"reason"`
 	Keywords  string `json:"keywords"`
+	// 新增：用于测试校验的匹配标记
+	DateMatch bool `json:"date_match"`
+	TimeMatch bool `json:"time_match"`
 }
 
 // AttendanceData OA系统返回的考勤数据

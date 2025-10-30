@@ -160,7 +160,11 @@ func ValidateApplication(appData model.ApplicationData, oaAttendance *model.OaAt
 	}
 
 	// 检查是否缺少必要的图片
-	if (appData.ApplicationType == "病假" || appData.ApplicationType == "补打卡") && len(imageList) == 0 {
+	needImageValidation := true
+	if appData.NeedImageValidation != nil {
+		needImageValidation = *appData.NeedImageValidation
+	}
+	if needImageValidation && (appData.ApplicationType == "病假" || appData.ApplicationType == "补打卡") && len(imageList) == 0 {
 		if len(appData.ImageUrls) == 0 {
 			return &model.AnalysisResult{IsAbnormal: true, Reason: "缺少必要的证明材料图片 (未提供 image_urls)"}
 		} else {

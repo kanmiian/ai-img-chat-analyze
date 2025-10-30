@@ -8,6 +8,7 @@ import (
 	"my-ai-app/config"
 	"my-ai-app/model"
 	"my-ai-app/rules"
+	"strings"
 	"sync"
 	"time"
 )
@@ -59,6 +60,12 @@ func (s *AnalysisService) runAnalysis(appData model.ApplicationData, fileHeaders
 
 	// 2. 准备 AI 分析所需的参数
 	employeeName := appData.Alias
+	// 新增：图片核验开关与考勤文本
+	needImageValidation := true
+	if appData.NeedImageValidation != nil {
+		needImageValidation = *appData.NeedImageValidation
+	}
+	attendanceText := strings.Join(appData.AttendanceInfo, ", ")
 
 	// 5. 并发处理多张图片
 	var validImageIndex int
@@ -104,7 +111,7 @@ func (s *AnalysisService) runAnalysis(appData model.ApplicationData, fileHeaders
 			case "qwen":
 				extractedData, requestId, tokenUsage, err = s.qwenClient.ExtractDataFromImage(fh, "", employeeName, appData.ApplicationType, appData.ApplicationDate, appData.StartTime, appData.EndTime)
 			case "volcano":
-				extractedData, requestId, tokenUsage, err = s.volcanoClient.ExtractDataFromImage(fh, "", employeeName, appData.ApplicationType, appData.ApplicationDate, appData.StartTime, appData.EndTime)
+				extractedData, requestId, tokenUsage, err = s.volcanoClient.ExtractDataFromImage(fh, "", employeeName, appData.ApplicationType, appData.ApplicationDate, appData.StartTime, appData.EndTime, needImageValidation, attendanceText)
 			default:
 				err = fmt.Errorf("未知的 AI provider: %s", provider)
 			}
@@ -164,7 +171,7 @@ func (s *AnalysisService) runAnalysis(appData model.ApplicationData, fileHeaders
 			case "qwen":
 				extractedData, requestId, tokenUsage, err = s.qwenClient.ExtractDataFromImage(nil, url, employeeName, appData.ApplicationType, appData.ApplicationDate, appData.StartTime, appData.EndTime)
 			case "volcano":
-				extractedData, requestId, tokenUsage, err = s.volcanoClient.ExtractDataFromImage(nil, url, employeeName, appData.ApplicationType, appData.ApplicationDate, appData.StartTime, appData.EndTime)
+				extractedData, requestId, tokenUsage, err = s.volcanoClient.ExtractDataFromImage(nil, url, employeeName, appData.ApplicationType, appData.ApplicationDate, appData.StartTime, appData.EndTime, needImageValidation, attendanceText)
 			default:
 				err = fmt.Errorf("未知的 AI provider: %s", provider)
 			}
