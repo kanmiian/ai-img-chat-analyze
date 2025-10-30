@@ -100,6 +100,7 @@ func (h *UploadHandler) TestVolcanoSimple(c *gin.Context) {
 		ImageBase64         string   `json:"image_base64" form:"image_base64"` // 新增：base64图片
 		AttendanceInfo      []string `json:"attendance_info" form:"attendance_info[]"`
 		NeedImageValidation *bool    `json:"need_image_validation" form:"need_image_validation"`
+		NeedAuthImage   *bool    `json:"need_auth_image" form:"need_auth_image"` // 新增：是否需要图片校验，默认为true
 	}
 
 	// 尝试JSON绑定，失败则尝试表单绑定
@@ -173,35 +174,84 @@ func (h *UploadHandler) TestVolcanoSimple(c *gin.Context) {
 		appData.Alias = "未知用户"
 	}
 
-	// 5. 调用火山引擎分析
-	result, err := h.analysisService.AnalyzeWithVolcano(appData, nil)
+	// 5. 根据need_auth_image字段调用不同的分析方法
 	totalDuration := time.Since(startTime)
+	var response gin.H
 
-	if err != nil {
-		log.Printf("火山引擎测试分析异常 (总耗时: %v): %v", totalDuration, err)
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"success": false,
-			"message": "分析失败",
-			"error":   err.Error(),
-		})
-		return
-	}
+	if needAuthImage {
+		// 需要图片校验，调用原有的图片分析方法
+		result, err := h.analysisService.AnalyzeWithVolcano(appData, nil)
+		if err != nil {
+			log.Printf("火山引擎图片分析异常 (总耗时: %v): %v", totalDuration, err)
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"success": false,
+				"message": "图片分析失败",
+				"error":   err.Error(),
+			})
+			return
+		}
 
-	// 6. 构造与 /check-by 约定的返回映射
-	// data -> content（关键字摘要）
-	// is_abnormal -> approve（总体审批建议）
-	// message -> keywords（关键字摘要）
-	// reason -> message（总体说明）
-	var keywords string
-	if len(result.ImagesAnalysis) > 0 {
-		for _, d := range result.ImagesAnalysis {
-			if d.Success && d.ExtractedData != nil && d.ExtractedData.Content != "" {
-				keywords = d.ExtractedData.Content
-				break
+		// 构造图片分析的返回映射，统一格式
+		var keywords string
+		if len(result.ImagesAnalysis) > 0 {
+			for _, d := range result.ImagesAnalysis {
+				if d.Success && d.ExtractedData != nil && d.ExtractedData.Content != "" {
+					keywords = d.ExtractedData.Content
+					break
+				}
 			}
 		}
+		approve := !result.IsAbnormal
+
+		log.Printf("火山引擎图片分析完成 (总耗时: %v) - Approve=%v", totalDuration, approve)
+
+		response = gin.H{
+			"valid":   approve,
+			"approve": approve,
+			"reason":  result.Reason,
+			"message": keywords,
+		}
+	} else {
+		// 不需要图片校验，调用纯文字分析方法
+		textResult, requestId, tokenUsage, err := h.analysisService.volcanoClient.CheckByNoImage(
+			appData.ApplicationType, appData.Alias, appData.ApplicationDate,
+			appData.StartTime, appData.EndTime, appData.AttendanceInfo)
+		
+		if err != nil {
+			log.Printf("火山引擎文字分析异常 (总耗时: %v): %v", totalDuration, err)
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"success": false,
+				"message": "文字分析失败",
+				"error":   err.Error(),
+			})
+			return
+		}
+
+		// 构造文字分析的返回映射，统一格式
+		if resultMap, ok := textResult.(map[string]interface{}); ok {
+			// 从文字分析结果中提取关键信息
+			applicationReasonable, _ := resultMap["application_reasonable"].(bool)
+			reason, _ := resultMap["reason"].(string)
+			suggestion, _ := resultMap["suggestion"].(string)
+			
+			// 构造统一的返回格式
+			response = gin.H{
+				"valid":   applicationReasonable,
+				"approve": applicationReasonable,
+				"reason":  reason,
+				"message": suggestion, // 将suggestion作为message返回
+			}
+		} else {
+			response = gin.H{
+				"valid":   false,
+				"approve": false,
+				"reason":  "文字分析结果格式错误",
+				"message": "分析失败",
+			}
+		}
+
+		log.Printf("火山引擎文字分析完成 (总耗时: %v) - RequestId: %s", totalDuration, requestId)
 	}
-	approve := !result.IsAbnormal
 
 	log.Printf("火山引擎测试完成 (总耗时: %v) - Approve=%v, result=%+v", totalDuration, approve, result)
 
