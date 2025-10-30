@@ -174,10 +174,10 @@ func buildExtractorPrompt1(appName string, appType string, appDate string, appSt
 
 %s
 
-**任务**：提取JSON（严格按格式）：
+    **任务**：先将图片中的时间统一规范为24小时制 HH:mm（不足补零，不含秒），然后提取JSON（严格按格式）：
 - extracted_name：图片中%s姓名（排除无关人员如医生）
 - request_date：图片日期（yyyy-MM-dd，仅月日补%s）
-- request_time：图片时间（HH:mm，优先符合申请时间）
+    - request_time：图片时间（必须为规范化后的 HH:mm，优先符合申请时间）
 - request_type：图片类型（病历单/聊天记录/含时间的办公环境照片/饭堂消费记录/系统操作记录/电脑开关机记录/未知）
 - is_proof_type_valid：是否为%s有效证据（补打卡需满足上述补打卡证据要求中的有效性条件；病假需为病历单、处方单或诊断证明；其他类型需为含时间的办公环境照片）
 - content：关键文字摘要（≤60字，不重复时间）
@@ -209,10 +209,11 @@ func buildExtractorPrompt(appName string, appType string, appDate string, appSta
 - 申请的时间：%s
 - 员工当天的考勤数据：%s
 
-分析判断要求：
+    分析判断要求：
+    0. 统一时间格式：凡是涉及到时间（图片中的时间、申请时间），先将其规范化转换为24小时制 HH:mm（不足补零，不得包含秒），再进行比较与判断。
 1. 若传入了员工姓名，需判断提取的姓名是否和申请人一致。
 2. 判断图片中提取到的最相关日期是否与 {{APPLICATION_DATE}} 一致。
-3. 判断图片时间是否有符合申请的时间点。
+    3. 判断图片时间是否有符合申请的时间点（时间统一按 HH:mm 对比）。
 4. 原则: 基于 {{APPLICATION_TYPE}}，判断该图片证据是否能从逻辑上强有力地支撑申请事由。分析指引:
 若为 "病假": 证据是否能证明申请人(员工)在申请日期确实因医疗原因无法工作？（例如：诊断证明、挂号单、药费单等）。
 若为 "补打卡" (含上下班): 证据是否能合理且可信地证明员工在工作或者在公司内？
@@ -227,7 +228,7 @@ AI 指引: AI应优先采信这些类别的证据，只要它们能清晰展示�
 7. 分析并给出符合 / 不符合的原因，需综合考虑图片内容、时间、考勤数据等多方面因素导致申请无效的情况。
 8. 给出AI的建议，即是否建议通过该申请。
 
-输出格式要求：严格输出以下JSON（不要多余解释）：
+    输出格式要求：严格输出以下JSON（不要多余解释）。所有涉及时间字段需先规范为 HH:mm：
 {
   "name_match": true/false,
   "date_match": true/false,
@@ -259,7 +260,8 @@ func buildPromptByType(employeeName string, appType string, applicationDate stri
 
 ## 判断标准:
 请严格基于申请日期与时间进行比对。如图片中存在多个日期或时间，请优先选择最接近申请日期和时间的一个作为参考。
-**禁止使用模糊匹配或近似判断。所有时间比较均需严格按数值计算。**
+**统一时间格式：所有出现的时间（图片里的、申请时间）先规范化为24小时制 HH:mm（不足补零，不包含秒），然后再进行比较。**
+**禁止使用模糊匹配或近似判断。所有时间比较均需严格按数值计算（按 HH:mm）。**
 ### 补打卡类型
 1. 日期和时间匹配
    - 上班补打卡: 图片中时间必须 ≤ {{APPLICATION_TIME}} 才算匹配；  
@@ -275,7 +277,7 @@ func buildPromptByType(employeeName string, appType string, applicationDate stri
     - 图片中能识别出 {{EMPLOYEE_NAME}} 是患者/看诊人，且日期符合 {{APPLICATION_DATE}}。
 
 ## 输出格式要求:
-请严格输出以下 JSON，不得添加任何解释、推理、过程描述或额外内容：
+请严格输出以下 JSON，不得添加任何解释、推理、过程描述或额外内容；如需要返回时间，必须是规范化后的 HH:mm：
 {
     "date_match": true/false,
     "time_match": true/false,

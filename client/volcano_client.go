@@ -398,11 +398,12 @@ func (c *VolcanoClient) CheckByNoImage(appType string, appName string, appDate s
 // CheckByWithImageAuth 根据need_image_auth参数决定是否进行图片校验
 // need_image_auth为true时调用ExtractDataFromImage，为false时调用CheckByNoImage
 func (c *VolcanoClient) CheckByWithImageAuth(needImageAuth bool, fileHeader *multipart.FileHeader, imageURL string, appType string, appName string, appDate string, appStart string, appEnd string, attendanceInfo []string) (interface{}, string, *model.TokenUsage, error) {
-	if needImageAuth {
-		// 需要图片校验，调用原有的图片分析方法
-		return c.ExtractDataFromImage(fileHeader, imageURL, appName, appType, appDate, appStart, appEnd)
-	} else {
-		// 不需要图片校验，调用文本分析方法
-		return c.CheckByNoImage(appType, appName, appDate, appStart, appEnd, attendanceInfo)
-	}
+    if needImageAuth {
+        // 需要图片校验，调用带有核验开关与考勤文本的图片分析方法
+        attendanceText := strings.Join(attendanceInfo, ", ")
+        return c.ExtractDataFromImage(fileHeader, imageURL, appName, appType, appDate, appStart, appEnd, true, attendanceText)
+    } else {
+        // 不需要图片校验，调用文本分析方法
+        return c.CheckByNoImage(appType, appName, appDate, appStart, appEnd, attendanceInfo)
+    }
 }

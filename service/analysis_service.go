@@ -39,6 +39,19 @@ func (s *AnalysisService) AnalyzeWithVolcano(appData model.ApplicationData, file
 	return s.runAnalysis(appData, fileHeaders, "volcano")
 }
 
+// CheckByVolcanoNoImage 纯文字路径：不做图片核验，直接调用火山文本分析
+// 返回文本分析结果、请求ID与TokenUsage
+func (s *AnalysisService) CheckByVolcanoNoImage(appData model.ApplicationData) (map[string]interface{}, string, *model.TokenUsage, error) {
+    return s.volcanoClient.CheckByNoImage(
+        appData.ApplicationType,
+        appData.Alias,
+        appData.ApplicationDate,
+        appData.StartTime,
+        appData.EndTime,
+        appData.AttendanceInfo,
+    )
+}
+
 func (s *AnalysisService) runAnalysis(appData model.ApplicationData, fileHeaders []*multipart.FileHeader, provider string) (*model.AnalysisResult, error) {
 	startTime := time.Now()
 	log.Printf("开始分析请求 - Provider: %s, UserId: %s, Alias: %s, Type: %s, 图片数量: %d",

@@ -66,57 +66,41 @@ func shiftTime(h, m, deltaMin int) string {
 }
 
 func generateCases() []RequestPayload {
-	bases := []Base{
-		{URL: "https://oa.shiyuegame.com/aetherupload/display/file/20250213/015b626d257019a918ee252894763161.png/", Date: "2015-2-12", Time: "18:32", Type: "下班补打卡"},
-		{URL: "https://oa.shiyuegame.com/aetherupload/display/file/20251027/204c4a762af3a062c81399e5ba8e9bd9.png/", Date: "2025-10-20", Time: "08:55", Type: "上班补打卡"},
-		{URL: "https://oa.shiyuegame.com/aetherupload/display/file/20251027/9401662f9bce8be4752d93739452c55e.png/", Date: "2025-10-21", Time: "08:57", Type: "上班补打卡"},
-		{URL: "https://oa.shiyuegame.com/aetherupload/display/file/20251027/864d78b1e8ec586c4ec2db9a6ba4c13f.png/", Date: "2025-10-22", Time: "09:18", Type: "上班补打卡"},
-		{URL: "https://oa.shiyuegame.com/aetherupload/display/file/20251028/974ba75649bf75cfd451c80819f784aa.png/", Date: "2025-10-11", Time: "19:13", Type: "下班补打卡"},
-	}
+    bases := []Base{
+        {URL: "https://oa.shiyuegame.com/aetherupload/display/file/20250213/015b626d257019a918ee252894763161.png/", Date: "2025-02-12", Time: "18:32", Type: "下班补打卡"},
+        {URL: "https://oa.shiyuegame.com/aetherupload/display/file/20251027/204c4a762af3a062c81399e5ba8e9bd9.png/", Date: "2025-10-20", Time: "08:55", Type: "上班补打卡"},
+        {URL: "https://oa.shiyuegame.com/aetherupload/display/file/20251027/9401662f9bce8be4752d93739452c55e.png/", Date: "2025-10-21", Time: "08:57", Type: "上班补打卡"},
+        {URL: "https://oa.shiyuegame.com/aetherupload/display/file/20251027/864d78b1e8ec586c4ec2db9a6ba4c13f.png/", Date: "2025-10-22", Time: "09:18", Type: "上班补打卡"},
+        {URL: "https://oa.shiyuegame.com/aetherupload/display/file/20251028/974ba75649bf75cfd451c80819f784aa.png/", Date: "2025-10-11", Time: "19:13", Type: "下班补打卡"},
+    }
 
-	var out []RequestPayload
-	user := "sy-test"
-	alias := "测试用户"
-	// 每张图片生成的用例数量，合计约 25 条
-	perBase := 5
-	for k, b := range bases {
-		d := mustParseDate(b.Date)
-		hh, mm := mustParseTime(b.Time)
-		deltasD := []int{0, -1, 1, -2, 2}
-		deltasM := []int{0, -5, 5, -10, 10}
-		count := 0
-		for i, dd := range deltasD {
-			for j, dm := range deltasM {
-				ad := shiftDate(d, dd)
-				at := shiftTime(hh, mm, dm)
-				payload := RequestPayload{
-					UserId:              fmt.Sprintf("%s-b%d-%d-%d", user, k+1, i, j),
-					Alias:               alias,
-					ApplicationType:     b.Type,
-					ApplicationDate:     ad,
-					StartTime:           map[bool]string{true: ""}[b.Type == "下班补打卡"],
-					EndTime:             map[bool]string{true: at}[b.Type == "下班补打卡"],
-					ApplicationTime:     "",
-					ImageUrls:           []string{b.URL},
-					AttendanceInfo:      []string{},
-					NeedImageValidation: true,
-				}
-				out = append(out, payload)
-				count++
-				if count >= perBase {
-					break
-				}
-			}
-			if count >= perBase {
-				break
-			}
-		}
-	}
-	// 截断到最多 25 条
-	if len(out) > 25 {
-		out = out[:25]
-	}
-	return out
+    var out []RequestPayload
+    user := "sy-test"
+    alias := "测试用户"
+    for k, b := range bases {
+        // 使用准确的日期和时间，不做偏移
+        start := ""
+        end := ""
+        if b.Type == "下班补打卡" {
+            end = b.Time
+        } else {
+            start = b.Time
+        }
+        payload := RequestPayload{
+            UserId:              fmt.Sprintf("%s-b%d", user, k+1),
+            Alias:               alias,
+            ApplicationType:     b.Type,
+            ApplicationDate:     b.Date,
+            StartTime:           start,
+            EndTime:             end,
+            ApplicationTime:     "",
+            ImageUrls:           []string{b.URL},
+            AttendanceInfo:      []string{},
+            NeedImageValidation: true,
+        }
+        out = append(out, payload)
+    }
+    return out
 }
 
 func postJSON(url string, body any) (int, []byte, error) {
@@ -142,13 +126,13 @@ func postJSON(url string, body any) (int, []byte, error) {
 func main() {
 	server := os.Getenv("TEST_SERVER")
 	if server == "" {
-		server = "http://localhost:8080"
+		server = "http://localhost:3000"
 	}
 	// 若未包含协议前缀，补齐 http://
 	if !(len(server) >= 7 && (server[:7] == "http://" || (len(server) >= 8 && server[:8] == "https://"))) {
 		server = "http://" + server
 	}
-	endpoint := fmt.Sprintf("%s/api/v1/analyze-volcano", server)
+	endpoint := fmt.Sprintf("%s/api/v1/check-by-volcano", server)
 	cases := generateCases()
 	baseURLIndex := map[string]int{
 		"https://oa.shiyuegame.com/aetherupload/display/file/20250213/015b626d257019a918ee252894763161.png/": 1,
@@ -157,57 +141,49 @@ func main() {
 		"https://oa.shiyuegame.com/aetherupload/display/file/20251027/864d78b1e8ec586c4ec2db9a6ba4c13f.png/": 4,
 		"https://oa.shiyuegame.com/aetherupload/display/file/20251028/974ba75649bf75cfd451c80819f784aa.png/": 5,
 	}
-	log.Printf("开始执行测试用例，总计: %d，目标: %s", len(cases), endpoint)
-	ok, fail := 0, 0
-	for idx, c := range cases {
-		status, resp, err := postJSON(endpoint, c)
-		if err != nil {
-			fail++
-			log.Printf("[%02d] 请求失败: %v", idx+1, err)
-			continue
-		}
-		if status < 200 || status >= 300 {
-			fail++
-			log.Printf("[%02d] ✗ HTTP %d: %s", idx+1, status, string(resp))
-			continue
-		}
-		// 解析 AnalysisResult，获取第一张图片的 ExtractedData
-		var ar struct {
-			IsAbnormal     bool   `json:"is_abnormal"`
-			Reason         string `json:"reason"`
-			ImagesAnalysis []struct {
-				Success       bool `json:"success"`
-				ExtractedData *struct {
-					Approve   bool   `json:"approve"`
-					DateMatch bool   `json:"date_match"`
-					TimeMatch bool   `json:"time_match"`
-					ReasonLLM string `json:"reason"`
-				} `json:"extracted_data"`
-			} `json:"images_analysis"`
-		}
-		if err := json.Unmarshal(resp, &ar); err != nil {
-			fail++
-			log.Printf("[%02d] ✗ 解析返回失败: %v, 原文: %s", idx+1, err, string(resp))
-			continue
-		}
-		// 取第一条有效图片结果
-		var approve, dateMatch, timeMatch bool
-		reason := ar.Reason
-		if len(ar.ImagesAnalysis) > 0 && ar.ImagesAnalysis[0].ExtractedData != nil {
-			ed := ar.ImagesAnalysis[0].ExtractedData
-			approve = ed.Approve
-			dateMatch = ed.DateMatch
-			timeMatch = ed.TimeMatch
-			if ed.ReasonLLM != "" {
-				reason = ed.ReasonLLM
-			}
-		}
-		// 计算图片序号标识
-		imgIdx := baseURLIndex[c.ImageUrls[0]]
-		ok++
-		log.Printf("[img=%d][%02d] %s %s %s | approve=%v date_match=%v time_match=%v | reason=%s",
-			imgIdx, idx+1, c.ApplicationType, c.ApplicationDate, func() string { if c.StartTime != "" { return c.StartTime } else { return c.EndTime } }(), approve, dateMatch, timeMatch, reason)
-	}
-	ratio := 100.0 * float64(ok) / math.Max(1, float64(len(cases)))
-	log.Printf("完成: 成功 %d, 失败 %d, 成功率 %.1f%%", ok, fail, ratio)
+    log.Printf("开始执行测试用例，总计: %d，目标: %s", len(cases), endpoint)
+    totalRounds := 10
+    totalRequests := 0
+    approveCount := 0
+    fail := 0
+    for round := 1; round <= totalRounds; round++ {
+        log.Printf("-- Round %d/%d --", round, totalRounds)
+        for idx, c := range cases {
+            status, resp, err := postJSON(endpoint, c)
+            totalRequests++
+            if err != nil {
+                fail++
+                log.Printf("[%02d] 请求失败: %v", idx+1, err)
+                continue
+            }
+            if status < 200 || status >= 300 {
+                fail++
+                log.Printf("[%02d] ✗ HTTP %d: %s", idx+1, status, string(resp))
+                continue
+            }
+            // 解析统一返回
+            var res struct {
+                Approve   bool   `json:"approve"`
+                Valid     bool   `json:"valid"`
+                DateMatch bool   `json:"date_match"`
+                TimeMatch bool   `json:"time_match"`
+                Reason    string `json:"reason"`
+                Message   string `json:"message"`
+            }
+            if err := json.Unmarshal(resp, &res); err != nil {
+                fail++
+                log.Printf("[%02d] ✗ 解析返回失败: %v, 原文: %s", idx+1, err, string(resp))
+                continue
+            }
+            if res.Approve {
+                approveCount++
+            }
+            imgIdx := baseURLIndex[c.ImageUrls[0]]
+            ts := func() string { if c.StartTime != "" { return c.StartTime } else { return c.EndTime } }()
+            log.Printf("[img=%d][%02d] %s %s %s | approve=%v date_match=%v time_match=%v | reason=%s",
+                imgIdx, idx+1, c.ApplicationType, c.ApplicationDate, ts, res.Approve, res.DateMatch, res.TimeMatch, res.Reason)
+        }
+    }
+    ratio := 100.0 * float64(approveCount) / math.Max(1, float64(totalRequests))
+    log.Printf("完成: 总请求 %d, 失败 %d, approve率 %.1f%%", totalRequests, fail, ratio)
 }

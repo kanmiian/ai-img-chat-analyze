@@ -174,11 +174,11 @@ func (h *UploadHandler) TestVolcanoSimple(c *gin.Context) {
 		appData.Alias = "未知用户"
 	}
 
-	// 5. 根据need_auth_image字段调用不同的分析方法
+    // 5. 根据need_image_validation字段调用不同的分析方法
 	totalDuration := time.Since(startTime)
 	var response gin.H
 
-	if needAuthImage {
+    if needImageValidation {
 		// 需要图片校验，调用原有的图片分析方法
 		result, err := h.analysisService.AnalyzeWithVolcano(appData, nil)
 		if err != nil {
@@ -191,31 +191,41 @@ func (h *UploadHandler) TestVolcanoSimple(c *gin.Context) {
 			return
 		}
 
-		// 构造图片分析的返回映射，统一格式
-		var keywords string
-		if len(result.ImagesAnalysis) > 0 {
-			for _, d := range result.ImagesAnalysis {
-				if d.Success && d.ExtractedData != nil && d.ExtractedData.Content != "" {
-					keywords = d.ExtractedData.Content
-					break
-				}
-			}
-		}
-		approve := !result.IsAbnormal
+        // 构造图片分析的返回映射，统一格式
+        var keywords string
+        var dateMatch, timeMatch, imgApprove bool
+        if len(result.ImagesAnalysis) > 0 {
+            for _, d := range result.ImagesAnalysis {
+                if d.Success && d.ExtractedData != nil {
+                    if d.ExtractedData.Content != "" {
+                        keywords = d.ExtractedData.Content
+                    }
+                    imgApprove = d.ExtractedData.Approve
+                    dateMatch = d.ExtractedData.DateMatch
+                    timeMatch = d.ExtractedData.TimeMatch
+                    break
+                }
+            }
+        }
+        // 回退：若LLM未返回approve，则用规则引擎汇总结果
+        approve := imgApprove
+        if !imgApprove {
+            approve = !result.IsAbnormal
+        }
 
-		log.Printf("火山引擎图片分析完成 (总耗时: %v) - Approve=%v", totalDuration, approve)
+        log.Printf("火山引擎图片分析完成 (总耗时: %v) - Approve=%v, DateMatch=%v, TimeMatch=%v", totalDuration, approve, dateMatch, timeMatch)
 
-		response = gin.H{
-			"valid":   approve,
-			"approve": approve,
-			"reason":  result.Reason,
-			"message": keywords,
-		}
-	} else {
+        response = gin.H{
+            "valid":      approve,
+            "approve":    approve,
+            "time_match": timeMatch,
+            "date_match": dateMatch,
+            "reason":     result.Reason,
+            "message":    keywords,
+        }
+    } else {
 		// 不需要图片校验，调用纯文字分析方法
-		textResult, requestId, tokenUsage, err := h.analysisService.volcanoClient.CheckByNoImage(
-			appData.ApplicationType, appData.Alias, appData.ApplicationDate,
-			appData.StartTime, appData.EndTime, appData.AttendanceInfo)
+        textResult, requestId, tokenUsage, err := h.analysisService.CheckByVolcanoNoImage(appData)
 		
 		if err != nil {
 			log.Printf("火山引擎文字分析异常 (总耗时: %v): %v", totalDuration, err)
@@ -227,41 +237,30 @@ func (h *UploadHandler) TestVolcanoSimple(c *gin.Context) {
 			return
 		}
 
-		// 构造文字分析的返回映射，统一格式
-		if resultMap, ok := textResult.(map[string]interface{}); ok {
-			// 从文字分析结果中提取关键信息
-			applicationReasonable, _ := resultMap["application_reasonable"].(bool)
-			reason, _ := resultMap["reason"].(string)
-			suggestion, _ := resultMap["suggestion"].(string)
-			
-			// 构造统一的返回格式
-			response = gin.H{
-				"valid":   applicationReasonable,
-				"approve": applicationReasonable,
-				"reason":  reason,
-				"message": suggestion, // 将suggestion作为message返回
-			}
-		} else {
-			response = gin.H{
-				"valid":   false,
-				"approve": false,
-				"reason":  "文字分析结果格式错误",
-				"message": "分析失败",
-			}
-		}
+        // 构造文字分析的返回映射，统一格式
+        resultMap := textResult
+        // 从文字分析结果中提取关键信息
+        applicationReasonable, _ := resultMap["application_reasonable"].(bool)
+        reason, _ := resultMap["reason"].(string)
+        suggestion, _ := resultMap["suggestion"].(string)
+        
+        // 文字路径无时间对比，time_match与date_match统一返回false
+        response = gin.H{
+            "valid":       applicationReasonable,
+            "approve":     applicationReasonable,
+            "time_match":  false,
+            "date_match":  false,
+            "reason":      reason,
+            "message":     suggestion, // 将suggestion作为message返回
+            "request_id":  requestId,
+            "token_usage": tokenUsage,
+        }
 
 		log.Printf("火山引擎文字分析完成 (总耗时: %v) - RequestId: %s", totalDuration, requestId)
 	}
 
-	log.Printf("火山引擎测试完成 (总耗时: %v) - Approve=%v, result=%+v", totalDuration, approve, result)
-
-	c.JSON(http.StatusOK, gin.H{
-		"success":     approve,
-		"message":     keywords,
-		"is_abnormal": approve,
-		"reason":      result.Reason,
-		"data":        keywords,
-	})
+    log.Printf("火山引擎测试完成 (总耗时: %v)", totalDuration)
+    c.JSON(http.StatusOK, response)
 }
 
 // --- 私有助手: 解析表单数据和可选的图片（支持多图片） ---
